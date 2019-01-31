@@ -21,7 +21,7 @@ validating data structures:
 
 import numpy as np
 from mceq_config import config, dbg
-from misc import normalize_hadronic_model_name
+from misc import normalize_hadronic_model_name, is_charm_pdgid
 
 
 class MCEqParticle(object):
@@ -660,8 +660,8 @@ class InteractionYields(object):
         elif abs(sec_pdg) == symm_pdg:
             mpli[(symm_pdg, prim_pdg)][('isospin', args)] = kmat
         else:
-            raise Exception(
-                'No isospin relation found for secondary' + str(sec_pdg))
+            raise Exception('No isospin relation found for secondary' +
+                            str(sec_pdg))
 
         # Tell MCEqRun to regenerate the matrices if something has changed
         return True
@@ -714,9 +714,9 @@ class InteractionYields(object):
             gammacm = (Elab + mp) / Ecm
             avpt = self._ptav_sib23c[ppdg](
                 np.log(np.sqrt(Elab**2) - m[np.abs(ppdg)]**2))
-            
-            xf = 2 * (-betacm * gammacm * Esec + gammacm * np.sqrt(
-                Esec**2 - m[np.abs(ppdg)]**2 - avpt**2)) / Ecm
+
+            xf = 2 * (-betacm * gammacm * Esec + gammacm *
+                      np.sqrt(Esec**2 - m[np.abs(ppdg)]**2 - avpt**2)) / Ecm
             dxl_dxf = 1. / (2 * (
                 -betacm * gammacm * Elab + xL * Elab**2 * gammacm / np.sqrt(
                     (xL * Elab)**2 - m[np.abs(ppdg)]**2 - avpt**2)) / Ecm)
@@ -729,7 +729,8 @@ class InteractionYields(object):
             print 'Nearest energy, index: ', en, eidx
         m = self.get_y_matrix(prim_pdg, sec_pdg)
         xl_grid = self.e_grid[:eidx + 1] / en
-        xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
+        xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(
+            self.widths)[:eidx + 1]
         xf_grid, dxl_dxf = xF(xl_grid, en, sec_pdg)
         xf_dist = xl_dist * dxl_dxf
 
@@ -740,12 +741,7 @@ class InteractionYields(object):
 
         return xf_grid, xf_dist
 
-    def get_xlab_dist(self,
-                    energy,
-                    prim_pdg,
-                    sec_pdg,
-                    verbose=True,
-                    **kwargs):
+    def get_xlab_dist(self, energy, prim_pdg, sec_pdg, verbose=True, **kwargs):
         """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
         to `energy` for hadron-air collisions.
 
@@ -766,7 +762,8 @@ class InteractionYields(object):
             print 'Nearest energy, index: ', en, eidx
         m = self.get_y_matrix(prim_pdg, sec_pdg)
         xl_grid = self.e_grid[:eidx + 1] / en
-        xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(self.widths)[:eidx + 1]
+        xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(
+            self.widths)[:eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -861,11 +858,8 @@ class InteractionYields(object):
           carried out.
         """
         # if dbg > 1: print 'InteractionYields::get_y_matrix(): entering..'
-
         if (config['adv_set']['disable_charm_pprod']
-                and ((abs(projectile) > 400 and abs(projectile) < 500) or
-                     (abs(projectile) > 4000 and abs(projectile) < 5000))):
-
+                and is_charm_pdgid):
             if dbg > 2:
                 print('InteractionYields::get_y_matrix(): disabled particle ' +
                       'production by', projectile)
@@ -1020,8 +1014,8 @@ class InteractionYields(object):
                     # that in a later step indeed sigma_{pp,ccbar} is taken
 
                     self.yields[(
-                        proj, chid)] = self.yield_dict[self.iam + '_pl'][(
-                            proj, chid)].dot(cs_scale).dot(self.widths) * 14.5
+                        proj, chid)] = self.yield_dict[self.iam + '_pl'][
+                            (proj, chid)].dot(cs_scale).dot(self.widths) * 14.5
                     # Update index
                     self.secondary_dict[proj].append(chid)
 

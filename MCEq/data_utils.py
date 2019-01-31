@@ -15,6 +15,8 @@ for MCEq.
 import numpy as np
 from mceq_config import config, dbg, standard_particles
 import MCEq.data
+from MCEq.misc import is_charm_pdgid
+
 
 def clean_data_directory():
     """Removes all temporary files from the data directory.
@@ -28,13 +30,14 @@ def clean_data_directory():
     datad = path.join(path.dirname(__file__), '..', 'data')
 
     for fname in os.listdir(datad):
-        
+
         if 'ledpm' in fname:
             os.unlink(path.join(datad, fname))
         elif 'yields_compact' in fname:
             os.unlink(path.join(datad, fname))
         elif fname.endswith('.ppd') and 'sibyll23c_aux' not in fname:
             os.unlink(path.join(datad, fname))
+
 
 def convert_to_compact(fname):
     """Converts an interaction model dictionary to "compact" mode.
@@ -100,7 +103,7 @@ def convert_to_compact(fname):
             config['low_energy_extension']['le_model'].translate(
                 None, "-.").upper() + '_yields_compact.bz2')
 
-        if dbg > 2: 
+        if dbg > 2:
             print "convert_to_compact(): looking for file", dpmpath
 
         if not os.path.isfile(dpmpath):
@@ -119,7 +122,7 @@ def convert_to_compact(fname):
     if not os.path.isfile(fn_he):
         fn_he = os.path.join(config["data_dir"], fn_he)
 
-    if dbg > 0: 
+    if dbg > 0:
         print "convert_to_compact(): Attempting conversion of", fn_he
 
     # Load the yield dictionary (without multiplication with bin widths)
@@ -128,7 +131,8 @@ def convert_to_compact(fname):
     # Load the decay dictionary (with bin widths and index)
     try:
         ddi = pickle.load(
-            open(os.path.join(config["data_dir"], config["decay_fname"]), 'rb'))
+            open(
+                os.path.join(config["data_dir"], config["decay_fname"]), 'rb'))
     except IOError:
         # In case the ppd file is not yet created, use the DecayYields class to
         # decompress, rotate and weight the yield files
@@ -150,7 +154,7 @@ def convert_to_compact(fname):
         """This is a replica of function
         :func:`MCEq.data.InteractionYields._gen_index`."""
         dbgstr = 'convert_to_compact::create_secondary_dict(): '
-        if dbg > 2: 
+        if dbg > 2:
             print dbgstr + 'entering...'
 
         secondary_dict = {}
@@ -164,7 +168,7 @@ def convert_to_compact(fname):
 
             if proj not in secondary_dict:
                 secondary_dict[proj] = []
-                if dbg > 3: 
+                if dbg > 3:
                     print dbgstr, proj, 'added.'
 
             if np.sum(mat) > 0:
@@ -202,7 +206,8 @@ def convert_to_compact(fname):
         if np.sum(mat) < 1e-30:
             if dbg > 10:
                 print tab, 'zero matrix for', real_mother, interm_mothers
-        if interm_mothers[-1] not in dec_di or interm_mothers[-1] in standard_particles:
+        if interm_mothers[-1] not in dec_di or interm_mothers[
+                -1] in standard_particles:
             if dbg > 10:
                 print tab, 'no further decays of', interm_mothers
             return
@@ -266,6 +271,10 @@ def convert_to_compact(fname):
             continue
 
         for sec in lsecs:
+            if (config['adv_set']['disable_dpmjet_charm'] and 'DPMJET' in fname
+                    and is_charm_pdgid(sec)):
+                if dbg > 2: print 'Skip charm secodaries for DPMJET'
+                continue
             # Copy all direct production in first iteration
             if sec in standard_particles:
                 compact_di[(proj, sec)] = np.copy(mdi[(proj, sec)])
@@ -275,6 +284,10 @@ def convert_to_compact(fname):
         for sec in lsecs:
             #Iterate over all remaining secondaries
             if sec in standard_particles:
+                continue
+            if (config['adv_set']['disable_dpmjet_charm'] and 'DPMJET' in fname
+                    and is_charm_pdgid(sec)):
+                if dbg > 2: print 'Skip charm secodaries for DPMJET'
                 continue
 
             if dbg > 3: proj, '->', sec, '->', dec_di[sec]
@@ -336,9 +349,10 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
         # Load low energy model yields
         le_di = pickle.load(
             BZ2File(
-                os.path.join(config['data_dir'], config['low_energy_extension']
-                             ['le_model'].translate(
-                                 None, "-.").upper() + '_yields.bz2')))
+                os.path.join(
+                    config['data_dir'],
+                    config['low_energy_extension']['le_model'].translate(
+                        None, "-.").upper() + '_yields.bz2')))
 
     he_le_trasition = config['low_energy_extension']['he_le_transition']
     nbins_interp = config['low_energy_extension']['nbins_interp']
@@ -408,9 +422,8 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
     ext_di['le_ext'] = config["low_energy_extension"]
 
     if fname:
-        if dbg > 0: 
+        if dbg > 0:
             print "extend_to_low_energies(): Saving", fname
         pickle.dump(ext_di, BZ2File(fname, 'wb'), protocol=-1)
 
     return ext_di
-

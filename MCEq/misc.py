@@ -61,6 +61,11 @@ def set_ticks(which, n_divs=5, ax=None):
     if which in ['y', 'both']:
         ax.yaxis.set_minor_locator(AutoMinorLocator(n_divs))
 
+def is_charm_pdgid(pdgid):
+    """Returns True if particle ID belongs to a heavy (charm) hadron."""
+    
+    return ((abs(pdgid) > 400 and abs(pdgid) < 500) or
+                     (abs(pdgid) > 4000 and abs(pdgid) < 5000))
 
 def cornertext(text, loc=2, color=None, frameon=False, axes=None, **kwargs):
     """

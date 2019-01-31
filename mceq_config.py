@@ -200,8 +200,11 @@ config = {
         # Disable particle production by all hadrons, except nucleons
         "disable_sec_interactions": False,
 
-        # Disable particle production by charm projectiles (interactions)
+        # Disable particle production by charm *projectiles* (interactions)
         "disable_charm_pprod": False,
+
+        # Disable production of charm *secondaries* for DPMJET-III
+        "disable_dpmjet_charm": True,
 
         # Disable resonance/prompt contribution (this group of options
         # is either obsolete or needs maintenance.)
