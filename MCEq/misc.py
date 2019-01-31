@@ -61,11 +61,13 @@ def set_ticks(which, n_divs=5, ax=None):
     if which in ['y', 'both']:
         ax.yaxis.set_minor_locator(AutoMinorLocator(n_divs))
 
+
 def is_charm_pdgid(pdgid):
     """Returns True if particle ID belongs to a heavy (charm) hadron."""
-    
-    return ((abs(pdgid) > 400 and abs(pdgid) < 500) or
-                     (abs(pdgid) > 4000 and abs(pdgid) < 5000))
+
+    return ((abs(pdgid) > 400 and abs(pdgid) < 500)
+            or (abs(pdgid) > 4000 and abs(pdgid) < 5000))
+
 
 def cornertext(text, loc=2, color=None, frameon=False, axes=None, **kwargs):
     """
@@ -155,15 +157,17 @@ def cornertext(text, loc=2, color=None, frameon=False, axes=None, **kwargs):
 
     texts = [text] if isinstance(text, str) else text
 
-    colors = [color for t in texts] if (isinstance(color, str) or
-                                        color is None) else color
+    colors = [color for t in texts] if (isinstance(color, str)
+                                        or color is None) else color
 
     tas = []
     for t, c in zip(texts, colors):
         ta = TextArea(
             t,
-            textprops={"color": c,
-                       "fontproperties": fontproperties},
+            textprops={
+                "color": c,
+                "fontproperties": fontproperties
+            },
             multilinebaseline=True,
             minimumdescent=True,
             **kwargs)
@@ -237,6 +241,7 @@ def get_bins_and_width_from_centers(vector):
     widths = bins[1:] - bins[:-1]
     return bins, widths
 
+
 class EnergyGrid(object):
     """Class for constructing a grid for discrete distributions.
 
@@ -254,9 +259,11 @@ class EnergyGrid(object):
         self.grid = 0.5 * (self.bins[1:] + self.bins[:-1])
         self.widths = self.bins[1:] - self.bins[:-1]
         self.d = self.grid.size
-        info(1, 'Energy grid initialized {0:3.1e} - {1:3.1e}, {2} bins'.format(
-            self.bins[0], self.bins[-1], self.grid.size))
-            
+        info(
+            1, 'Energy grid initialized {0:3.1e} - {1:3.1e}, {2} bins'.format(
+                self.bins[0], self.bins[-1], self.grid.size))
+
+
 class EdepZFactors():
     """Handles calculation of energy dependent Z factors.
 
