@@ -1054,6 +1054,11 @@ class MCEqRun(object):
 
                 if s not in self.pdg2pref:
                     continue
+                if 'DPMJET' in self.y.iam and pref[s].is_lepton:
+                    if dbg > 0:
+                        print(self.__class__.__name__ +
+                              '_fill_matrices(): DPMJET hotfix direct leptons', s)
+                    continue
                 if self.adv_set['disable_direct_leptons'] and pref[s].is_lepton:
                     if dbg > 2:
                         print(self.__class__.__name__ +
