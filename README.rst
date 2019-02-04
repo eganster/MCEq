@@ -142,8 +142,7 @@ Copyright and license
 ---------------------
 Code and documentation copyright 2014-2017 Anatoli Fedynitch. Code released under `the MIT license <https://github.com/afedynitch/MCEq/blob/master/LICENSE>`_.
 
-
-.. |docs| image:: https://readthedocs.org/projects/particledatatool/badge/?version=latest
+.. |docs| image:: https://readthedocs.org/projects/mceq/badge/?version=latest
     :alt: Documentation Status
     :scale: 100%
-    :target: https://particledatatool.readthedocs.io/en/latest/?badge=latest
+    :target: https://mceq.readthedocs.io/en/latest/?badge=latest
