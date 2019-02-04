@@ -1,6 +1,8 @@
 MCEq - Matrix cascade equation (Release Candidate 1)
 ====================================================
 
+|docs|
+
 This version was previously known as 'dev' branch.
 
 This scientific package might be useful fo all who deal with high-energy inclusive atmospheric fluxes of muons and neutrinos. 
@@ -139,3 +141,9 @@ Contributers
 Copyright and license
 ---------------------
 Code and documentation copyright 2014-2017 Anatoli Fedynitch. Code released under `the MIT license <https://github.com/afedynitch/MCEq/blob/master/LICENSE>`_.
+
+
+.. |docs| image:: https://readthedocs.org/projects/particledatatool/badge/?version=latest
+    :alt: Documentation Status
+    :scale: 100%
+    :target: https://particledatatool.readthedocs.io/en/latest/?badge=latest
