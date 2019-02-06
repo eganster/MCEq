@@ -27,7 +27,8 @@ config = {
 
     # Debug flag for verbose printing, 0 silences MCEq entirely
     "debug_level": 1,
-
+    # Print module name in debug output
+    "print_module": True,
     #=========================================================================
     # Paths and library locations
     #=========================================================================
