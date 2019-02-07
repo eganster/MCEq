@@ -19,15 +19,13 @@ import numpy as np
 from scipy.integrate import trapz
 
 from MCEq.misc import info
-from particletools.tables import PYTHIAParticleData
+
 # from prince_config import config, spec_data
 
 # JH: I am still not sure, how this class should look like.
 # maybe we do not even need a class and can just use the decay distributions
 # as functions on an x-grid, where the management is done bei another class
 
-info(0, 'Workaround before refactoring MCEq with newer tools')
-pdata = PYTHIAParticleData()
 
 def get_particle_channels(mo, mo_energy, da_energy):
     """

@@ -24,7 +24,7 @@ The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
 """
 from time import time
 import numpy as np
-from mceq_config import dbg, config
+from mceq_config import config
 from MCEq.misc import print_in_rows, normalize_hadronic_model_name, info
 
 
@@ -179,17 +179,17 @@ class MCEqRun(object):
 
         # Particle index shortcuts
         #: (dict) Converts PDG ID to index in state vector
-        self.pdg2nceidx = {}
+        self.pdg2mceqidx = {}
         #: (dict) Converts particle name to index in state vector
-        self.pname2nceidx = {}
+        self.pname2mceqidx = {}
         #: (dict) Converts PDG ID to reference of :class:`data.MCEqParticle`
         self.pdg2pref = {}
         #: (dict) Converts particle name to reference of :class:`data.MCEqParticle`
         self.pname2pref = {}
         #: (dict) Converts index in state vector to PDG ID
-        self.nceidx2pdg = {}
+        self.mceqidx2pdg = {}
         #: (dict) Converts index in state vector to reference of :class:`data.MCEqParticle`
-        self.nceidx2pname = {}
+        self.mceqidx2pname = {}
 
         # Further short-cuts depending on previous initializations
         self.n_tot_species = len(self.cascade_particles)
@@ -199,13 +199,13 @@ class MCEqRun(object):
         self.muon_selector = np.zeros(self.dim_states, dtype='bool')
         for p in self.particle_species:
             try:
-                nceidx = p.nceidx
+                mceqidx = p.mceqidx
             except AttributeError:
-                nceidx = -1
-            self.pdg2nceidx[p.pdgid] = nceidx
-            self.pname2nceidx[p.name] = nceidx
-            self.nceidx2pdg[nceidx] = p.pdgid
-            self.nceidx2pname[nceidx] = p.name
+                mceqidx = -1
+            self.pdg2mceqidx[p.pdgid] = mceqidx
+            self.pname2mceqidx[p.name] = mceqidx
+            self.mceqidx2pdg[mceqidx] = p.pdgid
+            self.mceqidx2pname[mceqidx] = p.name
             self.pdg2pref[p.pdgid] = p
             self.pname2pref[p.name] = p
 
@@ -225,7 +225,7 @@ class MCEqRun(object):
         self._init_alias_tables()
         self._init_muon_energy_loss()
 
-        self.print_particle_tables(True if dbg > 2 else False, 2)
+        self.print_particle_tables(2)
 
     def _init_muon_energy_loss(self):
         # Muon energy loss
@@ -307,8 +307,8 @@ class MCEqRun(object):
         cascade_particles = [p for p in particle_list if not p.is_resonance]
         resonances = [p for p in particle_list if p.is_resonance]
 
-        for nceidx, h in enumerate(cascade_particles):
-            h.nceidx = nceidx
+        for mceqidx, h in enumerate(cascade_particles):
+            h.mceqidx = mceqidx
 
         return cascade_particles + resonances, cascade_particles, resonances
 
@@ -410,7 +410,7 @@ class MCEqRun(object):
         - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
         - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
 
-        For ``dbg > 0`` some general information about matrix shape and the number of
+        For debug_levels >= 2 some general information about matrix shape and the number of
         non-zero elements is printed. The intermediate matrices :math:`\boldsymbol{C}` and
         :math:`\boldsymbol{D}` are deleted afterwards to save memory.
 
@@ -937,7 +937,7 @@ class MCEqRun(object):
                     propmat[alt_score[0]:alt_score[1], r[p_orig].
                             lidx():r[p_orig].uidx()] += dprop.dot(pprod_mat)
 
-            if dbg >= 10:
+            if config["debug_level"] >= 10:
                 pstr = 'res'
                 dstr = 'Mchain'
                 if idcs == r[p].hadridx():
@@ -1005,8 +1005,7 @@ class MCEqRun(object):
                 if s not in self.pdg2pref:
                     continue
                 if 'DPMJET' in self.y.iam and pref[s].is_lepton:
-                    if dbg > 0:
-                        info(1, 'DPMJET hotfix direct leptons', s)
+                    info(1, 'DPMJET hotfix direct leptons', s)
                     continue
                 if self.adv_set['disable_direct_leptons'] and pref[s].is_lepton:
                     info(2, 'veto direct lepton', s)
@@ -1326,7 +1325,7 @@ class MCEqRun(object):
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
 
-    def print_particle_tables(self, print_indices=False, min_dbg_lev=2):
+    def print_particle_tables(self, min_dbg_lev=2):
 
         info(min_dbg_lev, "\nHadrons and stable particles:\n", no_caller=True)
         print_in_rows(min_dbg_lev, [
@@ -1358,14 +1357,14 @@ class MCEqRun(object):
         # list particle indices
         if print_indices:
             info(
-                min(min_dbg_lev, 20),
+                10,
                 "Particle matrix indices:",
                 no_caller=True)
             some_index = 0
             for p in self.cascade_particles:
                 for i in xrange(self.d):
                     info(
-                        min(min_dbg_lev, 20),
+                        10,
                         p.name + '_' + str(i),
                         some_index,
                         no_caller=True)

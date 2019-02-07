@@ -15,6 +15,10 @@ import numpy as np
 from mceq_config import config
 from MCEq.misc import info
 
+from particletools.tables import PYTHIAParticleData
+info(5, 'Initialization of PYTHIAParticleData object')
+_pdata = PYTHIAParticleData()
+
 class MCEqParticle(object):
     """Bundles different particle properties for simplified
     availability of particle properties in :class:`MCEq.core.MCEqRun`.
@@ -27,14 +31,7 @@ class MCEqParticle(object):
       d (int): dimension of the energy grid
     """
 
-    def __init__(self, pdgid, particle_db, pythia_db, cs_db, d):
-
-        #: (float) mixing energy, transition between hadron and resonance behavior
-        self.E_mix = 0
-        #: (int) energy grid index, where transition between hadron and resonance occurs
-        self.mix_idx = 0
-        #: (float) critical energy in air at the surface
-        self.E_crit = 0
+    def __init__(self, pdgid, particle_db, cs_db, d):
 
         #: (bool) particle is a hadron (meson or baryon)
         self.is_hadron = False
@@ -44,8 +41,26 @@ class MCEqParticle(object):
         self.is_baryon = False
         #: (bool) particle is a lepton
         self.is_lepton = False
+        #: (bool) if it's an electromagnetic particle
+        self.is_em = False
+        #: (bool) particle is a lepton
+        self.is_charged = False
+        #: (bool) particle is a nucleus
+        self.is_nucleus = False
+        #: (bool) particle is stable
+        self.is_stable = True
+        #: (float) lifetime
+        self.lifetime = np.inf
         #: (bool) particle is an alias (PDG ID encodes special scoring behavior)
         self.is_alias = False
+        #: (str) species name in string representation
+        self.sname = None
+        #: decay channels if any
+        self.decay_channels = {}
+        #: Mass, charge, neutron number
+        self.A, self.Z, self.N = 1, None, None
+        #: Mass in atomic units or GeV
+        self.mass = None
         #: (bool) particle has both, hadron and resonance properties
         self.is_mixed = False
         #: (bool) if particle has just resonance behavior
@@ -55,12 +70,21 @@ class MCEqParticle(object):
         #: (int) Particle Data Group Monte Carlo particle ID
         self.pdgid = pdgid
         #: (int) MCEq ID
-        self.nceidx = -1
+        self.mceqidx = -1
+
+        #: (float) mixing energy, transition between hadron and resonance behavior
+        self.E_mix = 0
+        #: (int) energy grid index, where transition between hadron and resonance occurs
+        self.mix_idx = 0
+        #: (float) critical energy in air at the surface
+        self.E_crit = 0
 
         self.particle_db = particle_db
-        self.pythia_db = pythia_db
+        self.pythia_db = _pdata
+
         if pdgid in config["adv_set"]["disable_decays"]:
-            pythia_db.force_stable(self.pdgid)
+            self.pythia_db.force_stable(self.pdgid)
+
         self.cs = cs_db
         self.d = d
 
@@ -100,7 +124,7 @@ class MCEqParticle(object):
         Returns:
           (int): lower index in state vector :attr:`MCEqRun.phi`
         """
-        return self.nceidx * self.d
+        return self.mceqidx * self.d
 
     def uidx(self):
         """Returns upper index of particle range in state vector.
@@ -108,7 +132,7 @@ class MCEqParticle(object):
         Returns:
           (int): upper index in state vector :attr:`MCEqRun.phi`
         """
-        return (self.nceidx + 1) * self.d
+        return (self.mceqidx + 1) * self.d
 
     def inverse_decay_length(self, E, cut=True):
         """Returns inverse decay length (or infinity (np.inf), if
@@ -233,16 +257,21 @@ class MCEqParticle(object):
 
 
 class SpeciesManager(object):
-    """Provides a database with particle and species."""
+    """Provides a database with particle and species.
+    
+    Authors:
+        Anatoli Fedynitch (DESY)
+        Jonas Heinze (DESY)
+    """
 
     def __init__(self, ncoid_list, ed):
         # (dict) Dimension of primary grid
         self.grid_dims = {'default': ed}
         # Particle index shortcuts
         #: (dict) Converts Neucosma ID to index in state vector
-        self.ncoid2princeidx = {}
+        self.ncoid2primceqidx = {}
         #: (dict) Converts particle name to index in state vector
-        self.sname2princeidx = {}
+        self.sname2primceqidx = {}
         #: (dict) Converts Neucosma ID to reference of
         # :class:`data.PrinceSpecies`
         self.ncoid2sref = {}
@@ -251,12 +280,12 @@ class SpeciesManager(object):
         self.sname2sref = {}
         #: (dict) Converts prince index to reference of
         #:class:`data.PrinceSpecies`
-        self.princeidx2sref = {}
+        self.primceqidx2sref = {}
         #: (dict) Converts index in state vector to Neucosma ID
-        self.princeidx2ncoid = {}
+        self.primceqidx2ncoid = {}
         #: (dict) Converts index in state vector to reference
         # of :class:`data.PrinceSpecies`
-        self.princeidx2pname = {}
+        self.primceqidx2pname = {}
         #: (int) Total number of species
         self.nspec = 0
 
@@ -272,14 +301,14 @@ class SpeciesManager(object):
         ncoid_list = sorted(list(set(ncoid_list)))
 
         self.species_refs = []
-        # Define position in state vector (princeidx) by simply
+        # Define position in state vector (primceqidx) by simply
         # incrementing it with the (sorted) list of Neucosma IDs
-        for princeidx, ncoid in enumerate(ncoid_list):
+        for primceqidx, ncoid in enumerate(ncoid_list):
             info(
                 4, "Appending species {0} at position {1}".format(
-                    ncoid, princeidx))
+                    ncoid, primceqidx))
             self.species_refs.append(
-                PrinceSpecies(ncoid, princeidx, self.grid_dims['default']))
+                PrinceSpecies(ncoid, primceqidx, self.grid_dims['default']))
 
         self.known_species = [s.ncoid for s in self.species_refs]
         self.redist_species = [
@@ -291,12 +320,12 @@ class SpeciesManager(object):
 
     def _init_species_tables(self):
         for s in self.species_refs:
-            self.ncoid2princeidx[s.ncoid] = s.princeidx
-            self.sname2princeidx[s.sname] = s.princeidx
-            self.princeidx2ncoid[s.princeidx] = s.ncoid
-            self.princeidx2pname[s.princeidx] = s.sname
+            self.ncoid2primceqidx[s.ncoid] = s.primceqidx
+            self.sname2primceqidx[s.sname] = s.primceqidx
+            self.primceqidx2ncoid[s.primceqidx] = s.ncoid
+            self.primceqidx2pname[s.primceqidx] = s.sname
             self.ncoid2sref[s.ncoid] = s
-            self.princeidx2sref[s.princeidx] = s
+            self.primceqidx2sref[s.primceqidx] = s
             self.sname2sref[s.sname] = s
 
         self.nspec = len(self.species_refs)
@@ -318,6 +347,6 @@ class SpeciesManager(object):
         for s in self.species_refs:
             str_out += s.sname + '\n' + ident
             str_out += 'NCO id : ' + str(s.ncoid) + '\n' + ident
-            str_out += 'PriNCe idx : ' + str(s.princeidx) + '\n\n'
+            str_out += 'PriNCe idx : ' + str(s.primceqidx) + '\n\n'
 
         return str_out
