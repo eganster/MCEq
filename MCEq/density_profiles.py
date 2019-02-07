@@ -35,7 +35,7 @@ from abc import ABCMeta, abstractmethod
 from os.path import join
 import numpy as np
 import MCEq.geometry
-from MCEq.misc import theta_deg, theta_rad
+from MCEq.misc import theta_deg, theta_rad, info
 from numba import jit, double  # @UnresolvedImport
 
 from mceq_config import dbg, config
@@ -52,15 +52,14 @@ def _load_cache():
 
     """
     import cPickle as pickle
-    if dbg > 0:
-        print "atmospheres::_load_cache(): loading cache."
+    info(2, 'loading cache.')
     fname = join(config['data_dir'],
                  config['atm_cache_file'])
 
     try:
         return pickle.load(open(fname, 'rb'))
     except IOError:
-        print "density_profiles::_load_cache(): creating new cache.."
+        info(2, 'creating new cache..')
         return {}
 
 
@@ -74,15 +73,13 @@ def _dump_cache(cache):
     """
     import cPickle as pickle
 
-    if dbg > 0:
-        print "density_profiles::_dump_cache() dumping cache."
+    info(2, 'dumping cache.')
     fname = join(config['data_dir'],
                  config['atm_cache_file'])
     try:
         pickle.dump(cache, open(fname, 'wb'), protocol=-1)
     except IOError:
-        raise IOError("density_profiles::_dump_cache(): " +
-                      'could not (re-)create cache. Wrong working directory?')
+        raise IOError('could not (re-)create cache. Wrong working directory?')
 
 class EarthsAtmosphere():
     """Abstract class containing common methods on atmosphere.
@@ -109,6 +106,8 @@ class EarthsAtmosphere():
         self.max_X = None
         self.max_den = 1.240e-03
         self.max_theta = 90.
+        self.location = None
+        self.season = None
 
     @abstractmethod
     def get_density(self, h_cm):
@@ -123,8 +122,7 @@ class EarthsAtmosphere():
         Raises:
             NotImplementedError:
         """
-        raise NotImplementedError("EarthsAtmosphere::get_density(): " +
-                                  "Base class called.")
+        raise NotImplementedError("Base class called.")
 
     def calculate_density_spline(self, n_steps=2000):
         """Calculates and stores a spline of :math:`\\rho(X)`.
@@ -141,15 +139,9 @@ class EarthsAtmosphere():
         from scipy.interpolate import UnivariateSpline
 
         if self.theta_deg is None:
-            raise Exception(('{0}::calculate_density_spline(): ' +
-                             'zenith angle not set').format(
-                                 self.__class__.__name__))
+            raise Exception('zenith angle not set')
         else:
-            if dbg:
-                print ('{0}::calculate_density_spline(): ' +
-                   'Calculating spline of rho(X) for zenith ' +
-                   '{1} degrees.').format(self.__class__.__name__,
-                                          self.theta_deg)
+            info(5,'Calculating spline of rho(X) for zenith {0} degrees.'.format(self.theta_deg))
 
         thrad = self.thrad
         path_length = self.geom.l(thrad)
@@ -174,8 +166,7 @@ class EarthsAtmosphere():
         #                                    dl_vec[i - 1], dl_vec[i],
         #                                    epsrel=0.01)[0]
 
-        if dbg:
-            print '.. took {0:1.2f}s'.format(time() - now)
+        info(5, '.. took {0:1.2f}s'.format(time() - now))
 
         # Save depth value at h_obs
         self.max_X = X_int[-1]
@@ -221,10 +212,7 @@ class EarthsAtmosphere():
             _dump_cache(cache)
 
         if self.theta_deg == theta_deg and not force_spline_calc:
-            if dbg:
-                print (self.__class__.__name__ +
-                   '::set_theta(): Using previous' +
-                   'density spline.')
+            info(5,'Using previous density spline.')
             return
 
         elif config['use_atm_cache'] and not force_spline_calc:
@@ -558,8 +546,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
         for h in self._atm_param[4]:
             thickl.append('{0:4.6f}'.format(quad(self.get_density, h,
                                                  112.8e5, epsrel=1e-4)[0]))
-        if dbg:
-            print '_thickl = np.array([' + ', '.join(thickl) + '])'
+        info(5, '_thickl = np.array([' + ', '.join(thickl) + '])')
 
 
 @jit(double(double, double, double[:, :]), target='cpu')
@@ -849,7 +836,6 @@ class AIRSAtmosphere(EarthsAtmosphere):
                              usecols=[0] + range(2, 27))
             with open(fname, 'r') as f:
                 comline = f.readline()
-            # print comline
             p_levels = [float(s.strip()) for s in
                         comline.split(' ')[3:] if s != ''][min_press_idx:]
             dates = num2date(tab[:, 0])
@@ -938,8 +924,7 @@ class AIRSAtmosphere(EarthsAtmosphere):
                             "::set_IC79_day(): IC79_day above range.")
         target_day = self._get_y_doy(self.dates[self.IC79_start] +
                                      datetime.timedelta(days=IC79_day))
-        if dbg:
-            print 'setting IC79_day', IC79_day
+        info(2, 'setting IC79_day', IC79_day)
         self.h, self.dens = self.interp_tab_d[target_day]
         _, self.temp = self.interp_tab_t[target_day]
         self.date = self.dates[target_day]
@@ -1000,9 +985,7 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
     def __init__(self, location, season):
         if location != 'SouthPole':
-            if dbg > 0:
-                print ('{0} location forced to SouthPole in' +
-                       ' class').format(self.__class__.__name__)
+            info(2, 'location forced to the South Pole')
             location = 'SouthPole'
         
         MSIS00Atmosphere.__init__(self, location, season)
@@ -1039,17 +1022,13 @@ class MSIS00IceCubeCentered(MSIS00Atmosphere):
 
         self._msis.set_location_coord(longitude=0.,
                                       latitude=self.latitude(theta_deg))
-        if dbg > 0:
-            print ('{0}::set_theta(): latitude = {1} for ' +
-                   'zenith angle = {2}').format(self.__class__.__name__,
+        info(1, 'latitude = {0} for zenith angle = {1}').format(
                                                 self.latitude(theta_deg),
                                                 theta_deg)
         if theta_deg > 90.:
-            if dbg > 0:
-                print ('{0}::set_theta(): theta = {1} below horizon.' +
-                       'using theta = {2}').format(self.__class__.__name__,
+            info(1, 'theta = {0} below horizon. using theta = {1}'.format(
                                                    theta_deg,
-                                                   180. - theta_deg)
+                                                   180. - theta_deg))
             theta_deg = 180. - theta_deg
         MSIS00Atmosphere.set_theta(self, theta_deg,
                                    force_spline_calc=force_spline_calc)
@@ -1287,22 +1266,22 @@ class GeneralizedTarget(object):
         axes.set_ylim(0., ymax)
         axes.set_xlabel('distance in target (cm)')
         axes.set_ylabel(r'depth X (g/cm$^2)$')
-        if dbg:
-            self.print_table()
+        
+        self.print_table(min_dbg_lev=2)
 
-    def print_table(self):
+    def print_table(self, min_dbg_lev=0):
         """Prints table of materials to standard output.
         """
 
         templ = '{0:^3} | {1:15} | {2:^9.3g}  | {3:^9.3g} | {4:^8.5g}'
-        print '********************* List of materials *************************'
+        info(mi_dbg_lev, '********************* List of materials *************************', no_caller=True)
         head = '{0:3} | {1:15} | {2:9} | {3:9} | {4:9}'.format(
             'no', 'name', 'start [cm]', 'end [cm]', 'density [g/cm**3]')
-        print '-' * len(head)
-        print head
-        print '-' * len(head)
+        info(mi_dbg_lev,  '-' * len(head), no_caller=True)
+        info(mi_dbg_lev,  head, no_caller=True)
+        info(mi_dbg_lev,  '-' * len(head), no_caller=True)
         for nm, mat in enumerate(self.mat_list):
-            print templ.format(nm, mat[3], mat[0], mat[1], mat[2])
+            info(mi_dbg_lev,  templ.format(nm, mat[3], mat[0], mat[1], mat[2]), no_caller=True)
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt

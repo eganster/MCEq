@@ -5,7 +5,11 @@
 
 Some helper functions and plotting features are collected in this module.
 
+- :class:`EdepZFactos` calculates energy-dependent spectrum weighted
+  moments (Z-Factors)
+
 """
+from __future__ import print_function
 
 import numpy as np
 from mceq_config import config, dbg
@@ -28,10 +32,13 @@ def theta_rad(theta):
     return theta / 180. * np.pi
 
 
-def print_in_rows(str_list, n_cols=8):
+def print_in_rows(min_dbg_level, str_list, n_cols=8):
     """Prints contents of a list in rows `n_cols`
     entries per row.
     """
+    if min_dbg_level > config["debug_level"]:
+        return
+        
     l = len(str_list)
     n_full_length = int(l / n_cols)
     n_rest = l % n_cols
@@ -41,7 +48,7 @@ def print_in_rows(str_list, n_cols=8):
                       ).format(*str_list[i * n_cols:(i + 1) * n_cols]) + '\n'
     print_str += ('"{:}", ' * n_rest).format(*str_list[-n_rest:])
 
-    print print_str.strip()[:-1]
+    print(print_str.strip()[:-1])
 
 
 def set_ticks(which, n_divs=5, ax=None):
@@ -55,7 +62,7 @@ def set_ticks(which, n_divs=5, ax=None):
     if ax is None:
         ax = gca()
     if which not in ['x', 'y', 'both']:
-        print 'Warning: undefined axis', which, 'when adjusting ticks.'
+        info(0, 'Warning: undefined axis', which, 'when adjusting ticks.')
     if which in ['x', 'both']:
         ax.xaxis.set_minor_locator(AutoMinorLocator(n_divs))
     if which in ['y', 'both']:
@@ -271,7 +278,7 @@ class EdepZFactors():
 
     def __init__(self, interaction_model, primary_flux_model):
         from MCEq.data import InteractionYields, HadAirCrossSections
-        from ParticleDataTool import SibyllParticleTable
+        from particletools.tables import SibyllParticleTable
         from misc import get_bins_and_width_from_centers
 
         self.y = InteractionYields(interaction_model)
@@ -289,11 +296,8 @@ class EdepZFactors():
         proj_cs_vec = self.cs.get_cs(proj)
         nuc_flux = self.pm.tot_nucleon_flux(self.e_vec)
         zfac = np.zeros(self.y.dim)
-        sec_hadr = sec_hadr
         if self.y.is_yield(proj, sec_hadr):
-            if dbg > 1:
-                print(("EdepZFactors::get_zfactor(): " +
-                       "calculating zfactor Z({0},{1})").format())
+            info(1, "calculating zfactor Z({0},{1})".format(proj, sec_hadr))
             y_mat = self.y.get_y_matrix(proj, sec_hadr)
 
             self.calculate_zfac(self.e_vec, self.e_widths, nuc_flux,
@@ -324,10 +328,11 @@ class EdepZFactors():
                         zfac[h] += nuc_flux[k] / nuc_flux[h] * csfac * \
                             y[:, k][h]  # * dE_k
         except ImportError:
-            print("Warning! Numba not in PYTHONPATH. ZFactor " +
-                  "calculation won't work.")
+            raise Exception("Warning! Numba not in PYTHONPATH. ZFactor " +
+                            "calculation won't work.")
 
         self.calculate_zfac = calculate_zfac
+
 
 def caller_name(skip=2):
     """Get a name of a caller in the format module.class.method
@@ -368,13 +373,13 @@ def caller_name(skip=2):
     if codename != '<module>':  # top level usually
         name.append(codename + '(): ')  # function or a method
     else:
-        name.append(': ') # If called from module scope
+        name.append(': ')  # If called from module scope
 
     del parentframe
     return "".join(name)
 
 
-def info(min_dbg_level, *message):
+def info(min_dbg_level, *message, **kwargs):
     """Print to console if `min_debug_level <= config["debug_level"]`
 
     The fuction determines automatically the name of caller and appends
@@ -384,8 +389,17 @@ def info(min_dbg_level, *message):
     Args:
         min_dbg_level (int): Minimum debug level in config for printing
         message (tuple): Any argument or list of arguments that casts to str
+        condition (bool): Print only if condition is True
+        blank_caller (bool): blank the caller name (for multiline output)
+        no_caller (bool): don't print the name of the caller
     """
 
-    if min_dbg_level <= config["debug_level"]:
+    condition = kwargs.pop('condition', True)
+    blank_caller = kwargs.pop('blank_caller', False)
+    no_caller = kwargs.pop('no_caller', False)
+
+    if condition and min_dbg_level <= config["debug_level"]:
         message = [str(m) for m in message]
-        print caller_name() + " ".join(message)
+        cname = caller_name() if not no_caller else ''
+        if blank_caller: cname = len(cname) * ' '
+        print(cname + " ".join(message))

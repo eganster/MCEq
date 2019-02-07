@@ -44,6 +44,7 @@ The functions use different libraries for sparse and dense linear algebra (BLAS)
 """
 import numpy as np
 from mceq_config import config, dbg
+from MCEq.misc import info
 
 def solv_numpy(nsteps,
                dX,
@@ -127,9 +128,8 @@ def solv_numpy(nsteps,
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
-    if dbg:
-        print "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps))
+    info(2, "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)))
 
     return phc, grid_sol
 
@@ -218,8 +218,8 @@ def solv_CUDA_dense(nsteps,
             y=cu_delta_phi)
         cubl.axpy(alpha=fl_pr(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
 
-    print "Performance: {0:6.2f}ms/iteration".format(
-        1e3 * (time() - start) / float(nsteps))
+    info(2, "Performance: {0:6.2f}ms/iteration".format(
+        1e3 * (time() - start) / float(nsteps)))
 
     return cu_curr_phi.copy_to_host(), []
 
@@ -270,7 +270,6 @@ class CUDASparseContext(object):
         self.descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
         self.cu_delta_phi = self.cuda.device_array_like(
             np.zeros(self.m, dtype=self.fl_pr))
-        print np.zeros(self.m, dtype=self.fl_pr).shape
 
     def set_phi(self, phi):
         self.cu_curr_phi = self.cuda.to_device(phi.astype(self.fl_pr))
@@ -369,9 +368,8 @@ def solv_CUDA_sparse(nsteps,
             grid_sol.append(c.get_phi())
             grid_step += 1
 
-    if dbg:
-        print "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps))
+    info(2, "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)))
 
     return c.get_phi(), grid_sol
 
@@ -502,9 +500,8 @@ def solv_MKL_sparse(nsteps,
             grid_sol.append(np.copy(npphi))
             grid_step += 1
 
-    if dbg:
-        print "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps))
+    info(2, "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)))
 
     return npphi, grid_sol
 
@@ -565,9 +562,8 @@ def solv_XeonPHI_sparse(nsteps,
 
     stream.sync()
 
-    if dbg:
-        print "Performance: {0:6.2f}ms/iteration".format(
-            1e3 * (time() - start) / float(nsteps))
+    info(2, "Performance: {0:6.2f}ms/iteration".format(
+            1e3 * (time() - start) / float(nsteps)))
 
     mic_phi.update_host()
     stream.sync()

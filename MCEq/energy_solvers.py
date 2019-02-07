@@ -88,7 +88,6 @@ class ChangCooper(object):
         self.solver = factorized(block_diag(self.nmuspec*[lhs_mat]))
 
     def solve_step(self, phc, dX):
-        # print dX
         self._setup_solver(dX)
         phc[self.mu_selector] = self.solver(
             self.rhs_mat.dot(phc[self.mu_selector]))
@@ -115,7 +114,6 @@ class SemiLagrangian(object):
         newgrid_log = np.log(newgrid)
         oldgrid_log = np.log(oldgrid)
         dEprime_dE = (newbins[1:] - newbins[:-1]) / (self.ebins[1:] - self.ebins[:-1])
-        # print np.gradient(newgrid_log, oldgrid_log)
 
         for nsp in xrange(self.nmuspec):
             newstate = state[lidx + dim_e * nsp:lidx + dim_e * (nsp + 1)]/dEprime_dE
@@ -200,6 +198,5 @@ class DifferentialOperator(object):
         return block_diag(self.nmuspec*[single_op]).tocsr()
 
     def solve_step(self, state, dX):
-        # print 'solve_step', dX
         state[self.mu_selector] += self.op.dot(
             state[self.mu_selector])*dX

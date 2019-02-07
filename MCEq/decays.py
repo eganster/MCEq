@@ -1,4 +1,19 @@
-"""The module contains everything to handle cross section interfaces."""
+"""The module contains the analytic expressions for the decay distributions of 
+neutrons, pions, kaons and muons (including helicity dependence). 
+
+The functions are extracted from a non-public code PriNCe for UHECR propagation.
+The documentation of the code and a possible reference is https://arxiv.org/abs/1901.03338 
+
+Note::
+
+    The module is under development and is not yet available.
+
+Authors::
+
+    Anatoli Fedynitch (DESY)
+    Jonas Heinze (DESY)
+
+"""
 
 import numpy as np
 from scipy.integrate import trapz

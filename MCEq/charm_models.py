@@ -17,6 +17,7 @@ when overwriting a model yield file in
 
 import numpy as np
 from mceq_config import dbg
+from MCEq.misc import info
 from abc import ABCMeta, abstractmethod
 
 
@@ -149,8 +150,8 @@ class MRS_charm(CharmModel):
             raise Exception("MRS_charm()::out of range")
         res = np.zeros_like(x)
         ran = (x > 0.01) & (x < 0.7)
-        res[ran] = np.array(A * x[ran]**(beta - 1.) *
-                            (1 - x[ran]**1.2)**n / 1e3)
+        res[ran] = np.array(A * x[ran]**
+                            (beta - 1.) * (1 - x[ran]**1.2)**n / 1e3)
         return res
 
     def D_dist(self, x, E, mes):
@@ -216,9 +217,7 @@ class MRS_charm(CharmModel):
         for i, e in enumerate(self.e_grid):
             m_out[:, i] = self.xdist(e) / self.siginel[i]
 
-        if dbg > 1:
-            print('MRS_charm::get_yield_matrix({0},{1}): ' +
-                  'returning matrix').format(proj, sec)
+        info(3, 'returning matrix for ({0},{1})'.format(proj, sec))
 
         return m_out
 
