@@ -82,8 +82,9 @@ class MCEqParticle(object):
         self.particle_db = particle_db
         self.pythia_db = _pdata
 
-        if pdgid in config["adv_set"]["disable_decays"]:
-            self.pythia_db.force_stable(self.pdgid)
+        # TODO: move this check to internal variable self.is_stable, or so
+        # if pdgid in config["adv_set"]["disable_decays"]:
+        #     self.pythia_db.force_stable(self.pdgid)
 
         self.cs = cs_db
         self.d = d
@@ -256,7 +257,7 @@ class MCEqParticle(object):
         return a_string
 
 
-class SpeciesManager(object):
+class ParticleManager(object):
     """Provides a database with particle and species.
     
     Authors:
@@ -264,73 +265,172 @@ class SpeciesManager(object):
         Jonas Heinze (DESY)
     """
 
-    def __init__(self, ncoid_list, ed):
+    def __init__(self, pdgid_list, egrid_dim):
         # (dict) Dimension of primary grid
-        self.grid_dims = {'default': ed}
+        self.grid_dims = {'default': egrid_dim}
         # Particle index shortcuts
         #: (dict) Converts Neucosma ID to index in state vector
-        self.ncoid2primceqidx = {}
+        self.pdgid2mceqidx = {}
         #: (dict) Converts particle name to index in state vector
-        self.sname2primceqidx = {}
+        self.sname2mceqidx = {}
         #: (dict) Converts Neucosma ID to reference of
-        # :class:`data.PrinceSpecies`
-        self.ncoid2sref = {}
+        # :class:`particlemanager.MCEqParticle`
+        self.pdgid2sref = {}
         #: (dict) Converts particle name to reference of
-        #:class:`data.PrinceSpecies`
+        #:class:`particlemanager.MCEqParticle`
         self.sname2sref = {}
         #: (dict) Converts prince index to reference of
-        #:class:`data.PrinceSpecies`
-        self.primceqidx2sref = {}
+        #:class:`particlemanager.MCEqParticle`
+        self.mceqidx2sref = {}
         #: (dict) Converts index in state vector to Neucosma ID
-        self.primceqidx2ncoid = {}
+        self.mceqidx2pdgid = {}
         #: (dict) Converts index in state vector to reference
-        # of :class:`data.PrinceSpecies`
-        self.primceqidx2pname = {}
+        # of :class:`particlemanager.MCEqParticle`
+        self.mceqidx2pname = {}
         #: (int) Total number of species
         self.nspec = 0
 
-        self._gen_species(ncoid_list)
-        self._init_species_tables()
+        self._init_particle_tables(pdgid_list)
+        self._init_mapping_tables()
 
-    def _gen_species(self, ncoid_list):
-        info(4, "Generating list of species.")
-
-        # ncoid_list += spec_data["non_nuclear_species"]
-
-        # Make sure list is unique and sorted
-        ncoid_list = sorted(list(set(ncoid_list)))
-
-        self.species_refs = []
-        # Define position in state vector (primceqidx) by simply
-        # incrementing it with the (sorted) list of Neucosma IDs
-        for primceqidx, ncoid in enumerate(ncoid_list):
-            info(
-                4, "Appending species {0} at position {1}".format(
-                    ncoid, primceqidx))
-            self.species_refs.append(
-                PrinceSpecies(ncoid, primceqidx, self.grid_dims['default']))
-
-        self.known_species = [s.ncoid for s in self.species_refs]
-        self.redist_species = [
-            s.ncoid for s in self.species_refs if s.has_redist
-        ]
-        self.boost_conserv_species = [
-            s.ncoid for s in self.species_refs if not s.has_redist
-        ]
-
-    def _init_species_tables(self):
+    def _init_mapping_tables(self):
         for s in self.species_refs:
-            self.ncoid2primceqidx[s.ncoid] = s.primceqidx
-            self.sname2primceqidx[s.sname] = s.primceqidx
-            self.primceqidx2ncoid[s.primceqidx] = s.ncoid
-            self.primceqidx2pname[s.primceqidx] = s.sname
-            self.ncoid2sref[s.ncoid] = s
-            self.primceqidx2sref[s.primceqidx] = s
+            self.pdgid2mceqidx[s.pdgid] = s.mceqidx
+            self.sname2mceqidx[s.sname] = s.mceqidx
+            self.mceqidx2pdgid[s.mceqidx] = s.pdgid
+            self.mceqidx2pname[s.mceqidx] = s.sname
+            self.pdgid2sref[s.pdgid] = s
+            self.mceqidx2sref[s.mceqidx] = s
             self.sname2sref[s.sname] = s
 
         self.nspec = len(self.species_refs)
 
-    def add_grid(self, grid_tag, dimension):
+    def _init_particle_tables(self, particle_list=None):
+
+        self.particle_species, self.cascade_particles, self.resonances = \
+            self._gen_list_of_particles(custom_list=particle_list)
+
+        # Further short-cuts depending on previous initializations
+        self.n_tot_species = len(self.cascade_particles)
+
+        self.dim_states = self.d * self.n_tot_species
+
+        self.muon_selector = np.zeros(self.dim_states, dtype='bool')
+        for p in self.particle_species:
+            try:
+                mceqidx = p.mceqidx
+            except AttributeError:
+                mceqidx = -1
+            self.pdg2mceqidx[p.pdgid] = mceqidx
+            self.pname2mceqidx[p.name] = mceqidx
+            self.mceqidx2pdg[mceqidx] = p.pdgid
+            self.mceqidx2pname[mceqidx] = p.name
+            self.pdg2pref[p.pdgid] = p
+            self.pname2pref[p.name] = p
+
+            # Select all positions of muon species in the state vector
+            if abs(p.pdgid) % 1000 % 100 % 13 == 0 and not (100 < abs(p.pdgid)
+                                                            < 7000):
+                self.muon_selector[p.lidx():p.uidx()] = True
+
+        self.e_weight = np.array(
+            self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
+
+        self.solution = np.zeros(self.dim_states)
+
+        # Initialize empty state (particle density) vector
+        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
+
+        self._init_alias_tables()
+        self._init_muon_energy_loss()
+
+        self.print_particle_tables(2)
+
+    def _init_categories(self, particle_pdg_list):
+        """Determines the list of particles for calculation and
+        returns lists of instances of :class:`data.MCEqParticle` .
+
+        The particles which enter this list are those, which have a
+        defined index in the SIBYLL 2.3 interaction model. Included are
+        most relevant baryons and mesons and some of their high mass states.
+        More details about the particles which enter the calculation can
+        be found in :mod:`ParticleDataTool`.
+
+        Returns:
+          (tuple of lists of :class:`data.MCEqParticle`): (all particles,
+          cascade particles, resonances)
+        """
+        from MCEq.particlemanager import MCEqParticle
+
+        info(5, "Generating particle list.")
+
+        particles = None
+
+        if custom_list:
+            try:
+                # Assume that particle list contains particle names
+                particles = [
+                    self.modtab.modname2pdg[pname] for pname in custom_list
+                ]
+            except KeyError:
+                # assume pdg indices
+                particles = custom_list
+            except:
+                raise Exception("custom particle list not understood:" +
+                                ','.join(custom_list))
+
+            particles += self.modtab.leptons
+        else:
+            particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
+
+        # Remove duplicates
+        particles = list(set(particles))
+
+        particle_list = [
+            MCEqParticle(h, self.modtab, self.pd, self.cs, self.d)
+            for h in particles
+        ]
+
+        particle_list.sort(key=lambda x: x.E_crit, reverse=False)
+
+        for p in particle_list:
+            p.calculate_mixing_energy(self._e_grid, self.adv_set['no_mixing'])
+
+        cascade_particles = [p for p in particle_list if not p.is_resonance]
+        resonances = [p for p in particle_list if p.is_resonance]
+
+        for mceqidx, h in enumerate(cascade_particles):
+            h.mceqidx = mceqidx
+
+        return cascade_particles + resonances, cascade_particles, resonances
+
+    # def _gen_species(self, pdgid_list):
+    #     info(4, "Generating list of species.")
+
+    #     # pdgid_list += spec_data["non_nuclear_species"]
+
+    #     # Make sure list is unique and sorted
+    #     pdgid_list = sorted(list(set(pdgid_list)))
+
+    #     self.species_refs = []
+    #     # Define position in state vector (mceqidx) by simply
+    #     # incrementing it with the (sorted) list of Neucosma IDs
+    #     for mceqidx, pdgid in enumerate(pdgid_list):
+    #         info(
+    #             4, "Appending species {0} at position {1}".format(
+    #                 pdgid, mceqidx))
+    #         self.species_refs.append(
+    #             MCEqParticle(pdgid, mceqidx, self.grid_dims['default']))
+
+    #     self.known_species = [s.pdgid for s in self.species_refs]
+    #     self.redist_species = [
+    #         s.pdgid for s in self.species_refs if s.has_redist
+    #     ]
+    #     self.boost_conserv_species = [
+    #         s.pdgid for s in self.species_refs if not s.has_redist
+    #     ]
+
+        def add_grid(self, grid_tag, dimension):
         """Defines additional grid dimensions under a certain tag.
 
         Propagates changes to this variable to all known species.
@@ -346,7 +446,7 @@ class SpeciesManager(object):
         ident = 3 * ' '
         for s in self.species_refs:
             str_out += s.sname + '\n' + ident
-            str_out += 'NCO id : ' + str(s.ncoid) + '\n' + ident
-            str_out += 'PriNCe idx : ' + str(s.primceqidx) + '\n\n'
+            str_out += 'NCO id : ' + str(s.pdgid) + '\n' + ident
+            str_out += 'PriNCe idx : ' + str(s.mceqidx) + '\n\n'
 
         return str_out

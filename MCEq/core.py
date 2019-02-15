@@ -26,7 +26,7 @@ from time import time
 import numpy as np
 from mceq_config import config
 from MCEq.misc import print_in_rows, normalize_hadronic_model_name, info
-
+from MCEq.particlemanager import ParticleManager
 
 class MCEqRun(object):
     """Main class for handling the calculation.
@@ -64,7 +64,7 @@ class MCEqRun(object):
     def __init__(self, interaction_model, density_model, primary_model,
                  theta_deg, adv_set, obs_ids, **kwargs):
 
-        from particletools.tables import SibyllParticleTable, PYTHIAParticleData
+        # from particletools.tables import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
@@ -94,13 +94,13 @@ class MCEqRun(object):
         # Save primary model params
         self.pm_params = primary_model
 
-        #: instance of :class:`ParticleDataTool.PYTHIAParticleData`: access to
-        #: properties of particles, like mass and charge
-        self.pd = PYTHIAParticleData()
+        # #: instance of :class:`ParticleDataTool.PYTHIAParticleData`: access to
+        # #: properties of particles, like mass and charge
+        # self.pd = PYTHIAParticleData()
 
-        #: instance of :class:`ParticleDataTool.SibyllParticleTable`: access to
-        #: properties lists of particles, index translation etc.
-        self.modtab = SibyllParticleTable()
+        # #: instance of :class:`ParticleDataTool.SibyllParticleTable`: access to
+        # #: properties lists of particles, index translation etc.
+        # self.modtab = SibyllParticleTable()
 
         # Store adv_set
         self.adv_set = adv_set
@@ -130,14 +130,15 @@ class MCEqRun(object):
         #: (np.array) energy grid (bin widths)
         self._e_widths = self.y.e_bins[1:] - self.y.e_bins[:-1]
 
-        # Hadron species include everything apart from resonances
-        if 'particle_list' not in kwargs:
-            kwargs['particle_list'] = None
+        # Custom particle list can be defined
+        particle_list = kwargs.pop('particle_list', self.y.particle_list + 
+            self.decays.particle_list)
+
+        # Create particle database
+        self.pman = ParticleManager(particle_list, self.d)
 
         # Set id of particles in observer category
-        self.set_obs_particles(obs_ids)
-
-        self._init_dimensions_and_particle_tables(kwargs['particle_list'])
+        self.pman.set_obs_particles(obs_ids)
 
         # Set interaction model and compute grids and matrices
         if interaction_model is not None:
@@ -169,64 +170,6 @@ class MCEqRun(object):
         """Energy grid (bin widths)"""
         return self._e_widths
 
-    def _init_dimensions_and_particle_tables(self, particle_list=None):
-
-        if particle_list is None:
-            particle_list = self.y.particle_list + self.decays.particle_list
-
-        self.particle_species, self.cascade_particles, self.resonances = \
-            self._gen_list_of_particles(custom_list=particle_list)
-
-        # Particle index shortcuts
-        #: (dict) Converts PDG ID to index in state vector
-        self.pdg2mceqidx = {}
-        #: (dict) Converts particle name to index in state vector
-        self.pname2mceqidx = {}
-        #: (dict) Converts PDG ID to reference of :class:`data.MCEqParticle`
-        self.pdg2pref = {}
-        #: (dict) Converts particle name to reference of :class:`data.MCEqParticle`
-        self.pname2pref = {}
-        #: (dict) Converts index in state vector to PDG ID
-        self.mceqidx2pdg = {}
-        #: (dict) Converts index in state vector to reference of :class:`data.MCEqParticle`
-        self.mceqidx2pname = {}
-
-        # Further short-cuts depending on previous initializations
-        self.n_tot_species = len(self.cascade_particles)
-
-        self.dim_states = self.d * self.n_tot_species
-
-        self.muon_selector = np.zeros(self.dim_states, dtype='bool')
-        for p in self.particle_species:
-            try:
-                mceqidx = p.mceqidx
-            except AttributeError:
-                mceqidx = -1
-            self.pdg2mceqidx[p.pdgid] = mceqidx
-            self.pname2mceqidx[p.name] = mceqidx
-            self.mceqidx2pdg[mceqidx] = p.pdgid
-            self.mceqidx2pname[mceqidx] = p.name
-            self.pdg2pref[p.pdgid] = p
-            self.pname2pref[p.name] = p
-
-            # Select all positions of muon species in the state vector
-            if abs(p.pdgid) % 1000 % 100 % 13 == 0 and not (100 < abs(p.pdgid)
-                                                            < 7000):
-                self.muon_selector[p.lidx():p.uidx()] = True
-
-        self.e_weight = np.array(
-            self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
-
-        self.solution = np.zeros(self.dim_states)
-
-        # Initialize empty state (particle density) vector
-        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
-
-        self._init_alias_tables()
-        self._init_muon_energy_loss()
-
-        self.print_particle_tables(2)
-
     def _init_muon_energy_loss(self):
         # Muon energy loss
         import cPickle as pickle
@@ -253,64 +196,6 @@ class MCEqRun(object):
 
         self.mu_lidx_nsp = (min(min_id_mi, min_id_pl), 10)
         self.mu_loss_handler = None
-
-    def _gen_list_of_particles(self, custom_list=None):
-        """Determines the list of particles for calculation and
-        returns lists of instances of :class:`data.MCEqParticle` .
-
-        The particles which enter this list are those, which have a
-        defined index in the SIBYLL 2.3 interaction model. Included are
-        most relevant baryons and mesons and some of their high mass states.
-        More details about the particles which enter the calculation can
-        be found in :mod:`ParticleDataTool`.
-
-        Returns:
-          (tuple of lists of :class:`data.MCEqParticle`): (all particles,
-          cascade particles, resonances)
-        """
-        from MCEq.particlemanager import MCEqParticle
-
-        info(5, "Generating particle list.")
-
-        particles = None
-
-        if custom_list:
-            try:
-                # Assume that particle list contains particle names
-                particles = [
-                    self.modtab.modname2pdg[pname] for pname in custom_list
-                ]
-            except KeyError:
-                # assume pdg indices
-                particles = custom_list
-            except:
-                raise Exception("custom particle list not understood:" +
-                                ','.join(custom_list))
-
-            particles += self.modtab.leptons
-        else:
-            particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
-
-        # Remove duplicates
-        particles = list(set(particles))
-
-        particle_list = [
-            MCEqParticle(h, self.modtab, self.pd, self.cs, self.d)
-            for h in particles
-        ]
-
-        particle_list.sort(key=lambda x: x.E_crit, reverse=False)
-
-        for p in particle_list:
-            p.calculate_mixing_energy(self._e_grid, self.adv_set['no_mixing'])
-
-        cascade_particles = [p for p in particle_list if not p.is_resonance]
-        resonances = [p for p in particle_list if p.is_resonance]
-
-        for mceqidx, h in enumerate(cascade_particles):
-            h.mceqidx = mceqidx
-
-        return cascade_particles + resonances, cascade_particles, resonances
 
     def _init_alias_tables(self):
         r"""Sets up the functionality of aliases and defines the meaning of
@@ -586,6 +471,8 @@ class MCEqRun(object):
         Args:
           obs_ids (list of strings): mother particle names
         """
+
+        #TODO: Forward this to ParticleManager
         if obs_ids is None:
             self.obs_ids = None
             return
