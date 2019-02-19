@@ -232,7 +232,7 @@ class MCEqRun(object):
         # Muon energy loss
         import cPickle as pickle
         from os.path import join
-        if config['energy_solver'] != 'Semi-Lagrangian':
+        if config['energy_solver'] == 'Direct':
             eloss_fname =  str(config['mu_eloss_fname'][:-4] 
                 + '_centers.ppl')
         else:
@@ -1236,6 +1236,7 @@ class MCEqRun(object):
                     self._e_bins, self.mu_dEdX, self.mu_lidx_nsp,
                     self.muon_selector)
             elif config["energy_solver"] == 'Chang-Cooper':
+                print 'Using chang-cooper'
                 self.mu_loss_handler = energy_solvers.ChangCooper(
                     self._e_bins, self.mu_dEdX, self.mu_lidx_nsp,
                     self.muon_selector)

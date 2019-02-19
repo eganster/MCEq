@@ -55,18 +55,18 @@ class ChangCooper(object):
                               self.dE)
 
         #Chang-Cooper
-        dl = -dmi * (A[:-1] + B[:-1] / dE)
-        du = (1 - dpl) * (A[1:] - B[1:] / dE)
-        dc_lhs = (2 * dE / dX + A[1:] * dpl + B[1:] / dE *
-                          (1 - dpl) - A[:-1] * (1 - dmi) - B[:-1] / dE * dmi)
-        dc_rhs = (2 * dE / dX - A[1:] * dpl - B[1:] / dE *
-                          (1 - dpl) + A[:-1] * (1 - dmi) - B[:-1] / dE * dmi)
+        # dl = -dmi * (A[:-1] + B[:-1] / dE)
+        # du = (1 - dpl) * (A[1:] - B[1:] / dE)
+        # dc_lhs = (2 * dE / dX + A[1:] * dpl + B[1:] / dE *
+        #                   (1 - dpl) - A[:-1] * (1 - dmi) - B[:-1] / dE * dmi)
+        # dc_rhs = (2 * dE / dX - A[1:] * dpl - B[1:] / dE *
+        #                   (1 - dpl) + A[:-1] * (1 - dmi) - B[:-1] / dE * dmi)
 
         # Crank-Nicholson
-        # du = A[1:]
-        # dl = -A[:-1]
-        # dc_lhs = 4*dE/dX + A[1:] - A[:-1]
-        # dc_rhs = 4*dE/dX - A[1:] + A[:-1]
+        du = A[1:]
+        dl = -A[:-1]
+        dc_lhs = 4*dE/dX + A[1:] - A[:-1]
+        dc_rhs = 4*dE/dX - A[1:] + A[:-1]
 
         return dl, du, dc_lhs, dc_rhs
 
@@ -84,8 +84,8 @@ class ChangCooper(object):
         self.rhs_mat = dia_matrix(
             (data, offsets),
             shape=(self.de, self.de))
-        self.rhs_mat = block_diag(self.nmuspec*[self.rhs_mat]).tocsr()
-        self.solver = factorized(block_diag(self.nmuspec*[lhs_mat]))
+        self.rhs_mat = block_diag(self.nmuspec*[self.rhs_mat]).tocsc()
+        self.solver = factorized(block_diag(self.nmuspec*[lhs_mat]).tocsc())
 
     def solve_step(self, phc, dX):
         # print dX
@@ -203,3 +203,6 @@ class DifferentialOperator(object):
         # print 'solve_step', dX
         state[self.mu_selector] += self.op.dot(
             state[self.mu_selector])*dX
+
+    def solve_ext(self, state):
+        return self.op.dot(state)
