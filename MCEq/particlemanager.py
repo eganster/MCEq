@@ -13,7 +13,7 @@ validating data structures:
 """
 import numpy as np
 from mceq_config import config
-from MCEq.misc import info
+from MCEq.misc import info, print_in_rows
 
 from particletools.tables import PYTHIAParticleData
 info(5, 'Initialization of PYTHIAParticleData object')
@@ -26,12 +26,11 @@ class MCEqParticle(object):
     Args:
       pdgid (int): PDG ID of the particle
       particle_db (object): handle to an instance of :class:`ParticleDataTool.SibyllParticleTable`
-      pythia_db (object): handle to an instance of :class:`ParticleDataTool.PYTHIAParticleData`
-      cs_db (object): handle to an instance of :class:`InteractionYields`
-      d (int): dimension of the energy grid
+      egrid (np.array, optional): energy grid (centers)
+      cs_db (object, optional): reference to an instance of :class:`InteractionYields`
     """
 
-    def __init__(self, pdgid, particle_db, cs_db, d):
+    def __init__(self, pdgid, particle_db, e_grid=None, cs_db=None):
 
         #: (bool) particle is a hadron (meson or baryon)
         self.is_hadron = False
@@ -54,7 +53,7 @@ class MCEqParticle(object):
         #: (bool) particle is an alias (PDG ID encodes special scoring behavior)
         self.is_alias = False
         #: (str) species name in string representation
-        self.sname = None
+        self.name = None
         #: decay channels if any
         self.decay_channels = {}
         #: Mass, charge, neutron number
@@ -80,16 +79,11 @@ class MCEqParticle(object):
         self.E_crit = 0
 
         self.particle_db = particle_db
-        self.pythia_db = _pdata
 
-        # TODO: move this check to internal variable self.is_stable, or so
-        # if pdgid in config["adv_set"]["disable_decays"]:
-        #     self.pythia_db.force_stable(self.pdgid)
+        # # TODO: move this check to internal variable self.is_stable, or so
+        # # if pdgid in config["adv_set"]["disable_decays"]:
+        # #     _pdata.force_stable(self.pdgid)
 
-        self.cs = cs_db
-        self.d = d
-
-        self.E_crit = self.critical_energy()
         self.name = particle_db.pdg2modname[pdgid]
 
         if pdgid in particle_db.mesons:
@@ -103,14 +97,25 @@ class MCEqParticle(object):
             if abs(pdgid) > 22:
                 self.is_alias = True
 
+        # Energy grid dependent inits
+        if e_grid is not None and cs_db is not None:
+            self.cs = cs_db
+            self._e_grid = e_grid
+            self._d = len(e_grid)
+
+            self._critical_energy()
+            self._calculate_mixing_energy()
+
+    @property
     def hadridx(self):
         """Returns index range where particle behaves as hadron.
 
         Returns:
           :func:`tuple` (int,int): range on energy grid
         """
-        return (self.mix_idx, self.d)
+        return (self.mix_idx, self._d)
 
+    @property
     def residx(self):
         """Returns index range where particle behaves as resonance.
 
@@ -119,21 +124,23 @@ class MCEqParticle(object):
         """
         return (0, self.mix_idx)
 
+    @property
     def lidx(self):
         """Returns lower index of particle range in state vector.
 
         Returns:
           (int): lower index in state vector :attr:`MCEqRun.phi`
         """
-        return self.mceqidx * self.d
+        return self.mceqidx * self._d
 
+    @property
     def uidx(self):
         """Returns upper index of particle range in state vector.
 
         Returns:
           (int): upper index in state vector :attr:`MCEqRun.phi`
         """
-        return (self.mceqidx + 1) * self.d
+        return (self.mceqidx + 1) * self._d
 
     def inverse_decay_length(self, E, cut=True):
         """Returns inverse decay length (or infinity (np.inf), if
@@ -147,13 +154,13 @@ class MCEqParticle(object):
           (float): :math:`\\frac{\\rho}{\\lambda_{dec}}` in 1/cm
         """
         try:
-            dlen = self.pythia_db.mass(self.pdgid) / \
-                self.pythia_db.ctau(self.pdgid) / E
+            dlen = _pdata.mass(self.pdgid) / \
+                _pdata.ctau(self.pdgid) / E
             if cut:
                 dlen[0:self.mix_idx] = 0.
             return 0.9966 * dlen  # Correction for bin average
         except ZeroDivisionError:
-            return np.ones(self.d) * np.inf
+            return np.ones(self._d) * np.inf
 
     def inverse_interaction_length(self, cs=None):
         """Returns inverse interaction length for A_target given by config.
@@ -163,9 +170,9 @@ class MCEqParticle(object):
         """
 
         m_target = config['A_target'] * 1.672621 * 1e-24  # <A> * m_proton [g]
-        return np.ones(self.d) * self.cs.get_cs(self.pdgid) / m_target
-
-    def critical_energy(self):
+        return np.ones(self._d) * self.cs.get_cs(self.pdgid) / m_target
+    
+    def _critical_energy(self):
         """Returns critical energy where decay and interaction
         are balanced.
 
@@ -175,36 +182,37 @@ class MCEqParticle(object):
           (float): :math:`\\frac{m\\ 6.4 \\text{km}}{c\\tau}` in GeV
         """
         try:
-            return self.pythia_db.mass(self.pdgid) * 6.4e5 / \
-                self.pythia_db.ctau(self.pdgid)
+            self.E_crit = _pdata.mass(self.pdgid) * 6.4e5 / _pdata.ctau(self.pdgid)
         except ZeroDivisionError:
-            return np.inf
+            self.E_crit = np.inf
 
-    def calculate_mixing_energy(self, e_grid, no_mix=False):
+    def _calculate_mixing_energy(self):
         """Calculates interaction/decay length in Air and decides if
         the particle has resonance and/or hadron behavior.
 
         Class attributes :attr:`is_mixed`, :attr:`E_mix`, :attr:`mix_idx`,
-        :attr:`is_resonance` are calculated here.
+        :attr:`is_resonance` are calculated here. If the option `no_mixing`
+        is set in config['adv_config'] particle is forced to be a resonance
+        or hadron behavior.
 
         Args:
           e_grid (numpy.array): energy grid of size :attr:`d`
-          no_mix (bool): if True, mixing is disabled and all particles
-                         have either hadron or resonances behavior.
           max_density (float): maximum density on the integration path (largest
                                decay length)
         """
 
         cross_over = config["hybrid_crossover"]
         max_density = config['max_density']
+        no_mix = config["adv_set"]['no_mixing']
+
         if abs(self.pdgid) in [2212]:
             self.mix_idx = 0
             self.is_mixed = False
             return
-        d = self.d
+        d = self._d
 
         inv_intlen = self.inverse_interaction_length()
-        inv_declen = self.inverse_decay_length(e_grid)
+        inv_declen = self.inverse_decay_length(self._e_grid)
 
         if (not np.any(inv_declen > 0.) or abs(
                 self.pdgid) in config["adv_set"]["exclude_from_mixing"]):
@@ -217,7 +225,7 @@ class MCEqParticle(object):
             threshold = 0.
         elif np.any(inv_intlen > 0.):
             lint = np.ones(d) / inv_intlen
-            d_tilde = 1 / self.inverse_decay_length(e_grid)
+            d_tilde = 1 / self.inverse_decay_length(self._e_grid)
 
             # multiply with maximal density encountered along the
             # integration path
@@ -229,7 +237,7 @@ class MCEqParticle(object):
 
         if np.max(threshold) < cross_over:
             self.mix_idx = d - 1
-            self.E_mix = e_grid[self.mix_idx]
+            self.E_mix = self._e_grid[self.mix_idx]
             self.is_mixed = False
             self.is_resonance = True
 
@@ -239,7 +247,7 @@ class MCEqParticle(object):
             self.is_resonance = False
         else:
             self.mix_idx = np.where(ldec / lint > cross_over)[0][0]
-            self.E_mix = e_grid[self.mix_idx]
+            self.E_mix = self._e_grid[self.mix_idx]
             self.is_mixed = True
             self.is_resonance = False
 
@@ -265,58 +273,54 @@ class ParticleManager(object):
         Jonas Heinze (DESY)
     """
 
-    def __init__(self, pdgid_list, egrid_dim):
+    def __init__(self, pdgid_list, e_grid, cs_db, mod_table=None):
         # (dict) Dimension of primary grid
-        self.grid_dims = {'default': egrid_dim}
+        self._e_grid = e_grid
+        self._d = len(e_grid)
         # Particle index shortcuts
         #: (dict) Converts Neucosma ID to index in state vector
-        self.pdgid2mceqidx = {}
+        self.pdg2mceqidx = {}
         #: (dict) Converts particle name to index in state vector
-        self.sname2mceqidx = {}
+        self.pname2mceqidx = {}
         #: (dict) Converts Neucosma ID to reference of
         # :class:`particlemanager.MCEqParticle`
-        self.pdgid2sref = {}
+        self.pdg2pref = {}
         #: (dict) Converts particle name to reference of
         #:class:`particlemanager.MCEqParticle`
-        self.sname2sref = {}
+        self.pname2pref = {}
         #: (dict) Converts prince index to reference of
         #:class:`particlemanager.MCEqParticle`
-        self.mceqidx2sref = {}
+        self.mceqidx2pref = {}
         #: (dict) Converts index in state vector to Neucosma ID
-        self.mceqidx2pdgid = {}
+        self.mceqidx2pdg = {}
         #: (dict) Converts index in state vector to reference
         # of :class:`particlemanager.MCEqParticle`
         self.mceqidx2pname = {}
         #: (int) Total number of species
         self.nspec = 0
 
+        if mod_table is None:
+            from particletools.tables import SibyllParticleTable
+            self.mod_table = SibyllParticleTable()
+        else:
+            self.mod_table = mod_table
+
+        # Cross section database
+        self._cs_db = cs_db
+
         self._init_particle_tables(pdgid_list)
-        self._init_mapping_tables()
-
-    def _init_mapping_tables(self):
-        for s in self.species_refs:
-            self.pdgid2mceqidx[s.pdgid] = s.mceqidx
-            self.sname2mceqidx[s.sname] = s.mceqidx
-            self.mceqidx2pdgid[s.mceqidx] = s.pdgid
-            self.mceqidx2pname[s.mceqidx] = s.sname
-            self.pdgid2sref[s.pdgid] = s
-            self.mceqidx2sref[s.mceqidx] = s
-            self.sname2sref[s.sname] = s
-
-        self.nspec = len(self.species_refs)
 
     def _init_particle_tables(self, particle_list=None):
 
-        self.particle_species, self.cascade_particles, self.resonances = \
-            self._gen_list_of_particles(custom_list=particle_list)
+        
+        self._init_categories(particle_pdg_list=particle_list)
 
         # Further short-cuts depending on previous initializations
-        self.n_tot_species = len(self.cascade_particles)
-
-        self.dim_states = self.d * self.n_tot_species
+        self.n_species = len(self.cascade_particles)
+        self.dim_states = self._d * self.n_species
 
         self.muon_selector = np.zeros(self.dim_states, dtype='bool')
-        for p in self.particle_species:
+        for p in self.all_particles:
             try:
                 mceqidx = p.mceqidx
             except AttributeError:
@@ -331,18 +335,10 @@ class ParticleManager(object):
             # Select all positions of muon species in the state vector
             if abs(p.pdgid) % 1000 % 100 % 13 == 0 and not (100 < abs(p.pdgid)
                                                             < 7000):
-                self.muon_selector[p.lidx():p.uidx()] = True
-
-        self.e_weight = np.array(
-            self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
-
-        self.solution = np.zeros(self.dim_states)
-
-        # Initialize empty state (particle density) vector
-        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
+                self.muon_selector[p.lidx:p.uidx] = True
 
         self._init_alias_tables()
-        self._init_muon_energy_loss()
+        # self._init_muon_energy_loss()
 
         self.print_particle_tables(2)
 
@@ -364,89 +360,130 @@ class ParticleManager(object):
 
         info(5, "Generating particle list.")
 
-        particles = None
-
-        if custom_list:
-            try:
-                # Assume that particle list contains particle names
-                particles = [
-                    self.modtab.modname2pdg[pname] for pname in custom_list
-                ]
-            except KeyError:
-                # assume pdg indices
-                particles = custom_list
-            except:
-                raise Exception("custom particle list not understood:" +
-                                ','.join(custom_list))
-
-            particles += self.modtab.leptons
+        if particle_pdg_list is not None:
+            particles = particle_pdg_list
+            particles += self.mod_table.leptons
         else:
-            particles = self.modtab.baryons + self.modtab.mesons + self.modtab.leptons
+            particles = self.mod_table.baryons + self.mod_table.mesons + self.mod_table.leptons
 
         # Remove duplicates
         particles = list(set(particles))
 
+        # Initialize particle objects
         particle_list = [
-            MCEqParticle(h, self.modtab, self.pd, self.cs, self.d)
+            MCEqParticle(h, self.mod_table, self._e_grid, self._cs_db)
             for h in particles
         ]
 
+        # Sort by critical energy (= int_len ~== dec_length ~ int_cs/tau)
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
 
-        for p in particle_list:
-            p.calculate_mixing_energy(self._e_grid, self.adv_set['no_mixing'])
-
+        # Cascade particles will "live" on the grid and have an mceqidx assigned
         cascade_particles = [p for p in particle_list if not p.is_resonance]
+
+        # These particles will only exist implicitely and integated out
         resonances = [p for p in particle_list if p.is_resonance]
 
+        # Assign an mceqidx (position in state vector) to each explicit particle
         for mceqidx, h in enumerate(cascade_particles):
             h.mceqidx = mceqidx
 
-        return cascade_particles + resonances, cascade_particles, resonances
+        self.cascade_particles = cascade_particles
+        self.resonances = resonances
+        self.all_particles = cascade_particles + resonances
 
-    # def _gen_species(self, pdgid_list):
-    #     info(4, "Generating list of species.")
+    def _init_alias_tables(self):
+        r"""Sets up the functionality of aliases and defines the meaning of
+        'prompt'.
 
-    #     # pdgid_list += spec_data["non_nuclear_species"]
+        The identification of the last mother particle of a lepton is implemented
+        via index aliases. I.e. the PDG index of muon neutrino 14 is transformed
+        into 7114 if it originates from decays of a pion, 7214 in case of kaon or
+        7014 if the mother particle is very short lived (prompt). The 'very short lived'
+        means that the critical energy :math:`\varepsilon \ge \varepsilon(D^\pm)`.
+        This includes all charmed hadrons, as well as resonances such as :math:`\eta`.
 
-    #     # Make sure list is unique and sorted
-    #     pdgid_list = sorted(list(set(pdgid_list)))
-
-    #     self.species_refs = []
-    #     # Define position in state vector (mceqidx) by simply
-    #     # incrementing it with the (sorted) list of Neucosma IDs
-    #     for mceqidx, pdgid in enumerate(pdgid_list):
-    #         info(
-    #             4, "Appending species {0} at position {1}".format(
-    #                 pdgid, mceqidx))
-    #         self.species_refs.append(
-    #             MCEqParticle(pdgid, mceqidx, self.grid_dims['default']))
-
-    #     self.known_species = [s.pdgid for s in self.species_refs]
-    #     self.redist_species = [
-    #         s.pdgid for s in self.species_refs if s.has_redist
-    #     ]
-    #     self.boost_conserv_species = [
-    #         s.pdgid for s in self.species_refs if not s.has_redist
-    #     ]
-
-        def add_grid(self, grid_tag, dimension):
-        """Defines additional grid dimensions under a certain tag.
-
-        Propagates changes to this variable to all known species.
+        The aliases for the special ``obs_`` category are also initialized here.
         """
-        info(2, 'New grid_tag', grid_tag, 'with dimension', dimension)
-        self.grid_dims[grid_tag] = dimension
+        info(5, "Initializing links to alias IDs.")
 
-        for s in self.species_refs:
-            s.grid_dims = self.grid_dims
+        self.alias_table = {}
+        prompt_ids = []
+        for p in self.all_particles:
+            if p.is_lepton or p.is_alias or p.pdgid < 0:
+                continue
+            if 411 in self.pdg2pref and p.E_crit >= self.pdg2pref[411].E_crit:
+                prompt_ids.append(p.pdgid)
+        for lep_id in [12, 13, 14, 16]:
+            self.alias_table[(211, lep_id)] = 7100 + lep_id  # pions
+            self.alias_table[(321, lep_id)] = 7200 + lep_id  # kaons
+            for pr_id in prompt_ids:
+                self.alias_table[(pr_id, lep_id)] = 7000 + lep_id  # prompt
+
+        # # check if leptons coming from mesons located in obs_ids should be
+        # # in addition scored in a separate category (73xx)
+        # self.obs_table = {}
+        # if self.obs_ids is not None:
+        #     for obs_id in self.obs_ids:
+        #         if obs_id in self.pdg2pref.keys():
+        #             self.obs_table.update({
+        #                 (obs_id, 12): 7312,
+        #                 (obs_id, 13): 7313,
+        #                 (obs_id, 14): 7314,
+        #                 (obs_id, 16): 7316
+        #             })
 
     def __repr__(self):
         str_out = ""
         ident = 3 * ' '
-        for s in self.species_refs:
-            str_out += s.sname + '\n' + ident
-            str_out += 'NCO id : ' + str(s.pdgid) + '\n' + ident
-            str_out += 'PriNCe idx : ' + str(s.mceqidx) + '\n\n'
+        for s in self.all_particles:
+            str_out += s.name + '\n' + ident
+            str_out += 'PDG id : ' + str(s.pdgid) + '\n' + ident
+            str_out += 'MCEq idx : ' + str(s.mceqidx) + '\n\n'
 
         return str_out
+
+    def print_particle_tables(self, min_dbg_lev=2):
+
+        info(min_dbg_lev, "\nHadrons and stable particles:\n", no_caller=True)
+        print_in_rows(min_dbg_lev, [
+            p.name for p in self.all_particles
+            if p.is_hadron and not p.is_resonance and not p.is_mixed
+        ])
+
+        info(min_dbg_lev, "\nMixed:\n", no_caller=True)
+        print_in_rows(min_dbg_lev, [p.name for p in self.all_particles if p.is_mixed])
+
+        info(min_dbg_lev, "\nResonances:\n", no_caller=True)
+        print_in_rows(min_dbg_lev, 
+            [p.name for p in self.all_particles if p.is_resonance])
+
+        info(min_dbg_lev, "\nLeptons:\n", no_caller=True)
+        print_in_rows(min_dbg_lev, [
+            p.name for p in self.all_particles
+            if p.is_lepton and not p.is_alias
+        ])
+        info(min_dbg_lev, "\nAliases:\n", no_caller=True)
+        print_in_rows(min_dbg_lev, [p.name for p in self.all_particles if p.is_alias])
+
+        info(
+            min_dbg_lev,
+            "\nTotal number of species:",
+            self.n_species,
+            no_caller=True)
+
+        # list particle indices
+        if False:
+            info(
+                10,
+                "Particle matrix indices:",
+                no_caller=True)
+            some_index = 0
+            for p in self.cascade_particles:
+                for i in xrange(self._d):
+                    info(
+                        10,
+                        p.name + '_' + str(i),
+                        some_index,
+                        no_caller=True)
+                    some_index += 1

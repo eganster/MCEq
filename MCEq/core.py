@@ -25,7 +25,7 @@ The preferred way to instantiate :class:`MCEq.core.MCEqRun` is::
 from time import time
 import numpy as np
 from mceq_config import config
-from MCEq.misc import print_in_rows, normalize_hadronic_model_name, info
+from MCEq.misc import normalize_hadronic_model_name, info
 from MCEq.particlemanager import ParticleManager
 
 class MCEqRun(object):
@@ -137,8 +137,21 @@ class MCEqRun(object):
         # Create particle database
         self.pman = ParticleManager(particle_list, self.d)
 
+        # Obtain total number of "cascade" particles and dimension of grid
+        self.n_species = self.pman.n_species
+        self.dim_states = self.pman.dim_states
+
         # Set id of particles in observer category
         self.pman.set_obs_particles(obs_ids)
+
+                #     self.e_weight = np.array(
+        # self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
+
+        # Initialize solution vector
+        self.solution = np.zeros(self.dim_states)
+
+        # Initialize empty state (particle density) vector
+        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
 
         # Set interaction model and compute grids and matrices
         if interaction_model is not None:
@@ -196,47 +209,6 @@ class MCEqRun(object):
 
         self.mu_lidx_nsp = (min(min_id_mi, min_id_pl), 10)
         self.mu_loss_handler = None
-
-    def _init_alias_tables(self):
-        r"""Sets up the functionality of aliases and defines the meaning of
-        'prompt'.
-
-        The identification of the last mother particle of a lepton is implemented
-        via index aliases. I.e. the PDG index of muon neutrino 14 is transformed
-        into 7114 if it originates from decays of a pion, 7214 in case of kaon or
-        7014 if the mother particle is very short lived (prompt). The 'very short lived'
-        means that the critical energy :math:`\varepsilon \ge \varepsilon(D^\pm)`.
-        This includes all charmed hadrons, as well as resonances such as :math:`\eta`.
-
-        The aliases for the special ``obs_`` category are also initialized here.
-        """
-        info(5, "Initializing links to alias IDs.")
-
-        self.alias_table = {}
-        prompt_ids = []
-        for p in self.particle_species:
-            if p.is_lepton or p.is_alias or p.pdgid < 0:
-                continue
-            if 411 in self.pdg2pref and p.E_crit >= self.pdg2pref[411].E_crit:
-                prompt_ids.append(p.pdgid)
-        for lep_id in [12, 13, 14, 16]:
-            self.alias_table[(211, lep_id)] = 7100 + lep_id  # pions
-            self.alias_table[(321, lep_id)] = 7200 + lep_id  # kaons
-            for pr_id in prompt_ids:
-                self.alias_table[(pr_id, lep_id)] = 7000 + lep_id  # prompt
-
-        # check if leptons coming from mesons located in obs_ids should be
-        # in addition scored in a separate category (73xx)
-        self.obs_table = {}
-        if self.obs_ids is not None:
-            for obs_id in self.obs_ids:
-                if obs_id in self.pdg2pref.keys():
-                    self.obs_table.update({
-                        (obs_id, 12): 7312,
-                        (obs_id, 13): 7313,
-                        (obs_id, 14): 7314,
-                        (obs_id, 16): 7316
-                    })
 
     def _init_Lambda_int(self):
         """Initializes the interaction length vector according to the order
@@ -1211,48 +1183,3 @@ class MCEqRun(object):
         rho_inv_vec = np.array(rho_inv_vec, dtype=self.fl_pr)
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
-
-    def print_particle_tables(self, min_dbg_lev=2):
-
-        info(min_dbg_lev, "\nHadrons and stable particles:\n", no_caller=True)
-        print_in_rows(min_dbg_lev, [
-            p.name for p in self.particle_species
-            if p.is_hadron and not p.is_resonance and not p.is_mixed
-        ])
-
-        info(min_dbg_lev, "\nMixed:\n", no_caller=True)
-        print_in_rows(min_dbg_lev, [p.name for p in self.particle_species if p.is_mixed])
-
-        info(min_dbg_lev, "\nResonances:\n", no_caller=True)
-        print_in_rows(min_dbg_lev, 
-            [p.name for p in self.particle_species if p.is_resonance])
-
-        info(min_dbg_lev, "\nLeptons:\n", no_caller=True)
-        print_in_rows(min_dbg_lev, [
-            p.name for p in self.particle_species
-            if p.is_lepton and not p.is_alias
-        ])
-        info(min_dbg_lev, "\nAliases:\n", no_caller=True)
-        print_in_rows(min_dbg_lev, [p.name for p in self.particle_species if p.is_alias])
-
-        info(
-            min_dbg_lev,
-            "\nTotal number of species:",
-            self.n_tot_species,
-            no_caller=True)
-
-        # list particle indices
-        if print_indices:
-            info(
-                10,
-                "Particle matrix indices:",
-                no_caller=True)
-            some_index = 0
-            for p in self.cascade_particles:
-                for i in xrange(self.d):
-                    info(
-                        10,
-                        p.name + '_' + str(i),
-                        some_index,
-                        no_caller=True)
-                    some_index += 1

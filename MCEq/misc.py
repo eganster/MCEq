@@ -84,6 +84,46 @@ class EnergyGrid(object):
                 self.bins[0], self.bins[-1], self.grid.size))
 
 
+def get_AZN(corsikaid):
+    """Returns mass number :math:`A`, charge :math:`Z` and neutron
+    number :math:`N` of ``corsikaid``.
+
+    Args:
+        corsikaid (int): corsika id of nucleus/mass group
+    Returns:
+        (int,int,int): (Z,A) tuple
+    """
+    Z, A = 1, 1
+
+    if corsikaid >= 100:
+        Z = corsikaid % 100
+        A = (corsikaid - Z) / 100
+    else:
+        Z, A = 0, 0
+
+    return A, Z, A - Z
+
+def corsikaid2pdg(corsika_id):
+    """Conversion of CORSIKA NUCLEAR code to PDG"""
+    if corsika_id == 101:
+        return 2212
+    elif corsika_id == 100:
+        return 2112
+    else:
+        A,Z,N = get_AZN(corsika_id)        
+        # 10LZZZAAAI
+        pdgid = 1000000000
+        pdgid += 10*A
+        pdgid += 10000*Z
+        return pdgid
+        
+def pdg2corsikaid(pdgid):
+    """Conversion from nuclear PDG ID to CORSIKA ID"""
+    A = 1000260520 % 1000 / 10
+    Z = 1000260520 % 1000000 / 10000
+    
+    return A*100 + Z
+    
 class EdepZFactors():
     """Handles calculation of energy dependent Z factors.
 
