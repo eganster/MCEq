@@ -391,6 +391,31 @@ class ParticleManager(object):
         self.cascade_particles = cascade_particles
         self.resonances = resonances
         self.all_particles = cascade_particles + resonances
+    
+    def add_tracking_particle(self, parent_list, child, alias):
+        """Allows tracking decay and particle production chains.
+
+        Replaces previous ``obs_particle`` function that allowed to track
+        only leptons from decays certain particles. This present feature
+        removes the special PDG IDs 71XX, 72XX, etc and allows to define
+        any channel like::
+        
+            $ particleManagerInstance.add_tracking_particle([211], 14, 'pi_numu')
+        
+        This will store muon neutrinos from pion decays under the alias 'pi_numu'.
+        Multiple parents are allowed, as well::
+
+            $ particleManagerInstance.add_tracking_particle(
+                [411, 421, 431], 14, 'D_numu')
+
+        Args:
+
+            alias (str): Name alias under which the result is accessible in get_solution
+            parents (list): list of parent particle PDG ID's
+            child (int): Child particle
+        """
+
+        pass
 
     def _init_alias_tables(self):
         r"""Sets up the functionality of aliases and defines the meaning of
