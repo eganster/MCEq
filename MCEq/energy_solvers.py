@@ -125,13 +125,13 @@ class SemiLagrangian(object):
 
 
 class DifferentialOperator(object):
-    def __init__(self, ebins, mu_dEdX, mu_lidx_nsp, mu_selector):
+    def __init__(self, ebins, mu_dEdX, mu_selector):
         self.ebins = ebins
         self.egrid = np.sqrt(ebins[1:] * ebins[:-1])
         self.log_h = np.log(ebins[1] / ebins[0])
         self.dim_e = ebins.size - 1
         self.mu_selector = mu_selector
-        self.mu_lidx, self.nmuspec = mu_lidx_nsp
+        self.mu_lidx, self.nmuspec = 0, 2
         self.dEdX = mu_dEdX
         self.op = self.construct_differential_operator()
 

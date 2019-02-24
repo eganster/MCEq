@@ -10,10 +10,12 @@ Some helper functions and plotting features are collected in this module.
 
 """
 from __future__ import print_function
-
+from collections import namedtuple
 import numpy as np
 from mceq_config import config, dbg
 
+#: Energy grid (centers, bind widths, dimension)
+energy_grid = namedtuple("energy_grid",("c", "b", "w", "d"))
 
 def normalize_hadronic_model_name(name):
     """Converts hadronic model name into standard form"""
@@ -62,29 +64,56 @@ def _get_closest(value, in_list):
     minindex = np.argmin(np.abs(in_list - value * np.ones(len(in_list))))
     return minindex, in_list[minindex]
 
-class EnergyGrid(object):
-    """Class for constructing a grid for discrete distributions.
+# class EnergyGrid(object):
+#     """Class for constructing a grid for discrete distributions.
 
-    Since we discretize everything in energy, the name seems appropriate.
-    All grids are log spaced.
+#     Since we discretize everything in energy, the name seems appropriate.
+#     All grids are log spaced.
+
+#     Args:
+#         lower (float): log10 of low edge of the lowest bin
+#         upper (float): log10 of upper edge of the highest bin
+#     """
+
+#     def __init__(self, lower, upper, bins_dec):
+#         import numpy as np
+#         self.bins = np.logspace(lower, upper, (upper - lower) * bins_dec + 1)
+#         self.grid = np.sqrt(self.bins[1:] * self.bins[:-1])
+#         self.widths = self.bins[1:] - self.bins[:-1]
+#         self.d = self.grid.size
+#         info(
+#             1, 'Energy grid initialized {0:3.1e} - {1:3.1e}, {2} bins'.format(
+#                 self.bins[0], self.bins[-1], self.grid.size))
+
+
+def getAZN(pdg_id):
+    """Returns mass number :math:`A`, charge :math:`Z` and neutron
+    number :math:`N` of ``pdg_id``.
+
+    Note::
+    
+        PDG ID for nuclei is coded according to 10LZZZAAAI. For iron-52 it is 1000260520.
 
     Args:
-        lower (float): log10 of low edge of the lowest bin
-        upper (float): log10 of upper edge of the highest bin
+        pdgid (int): PDG ID of nucleus/mass group
+    Returns:
+        (int,int,int): (Z,A) tuple
     """
+    Z, A = 1, 1
+    if pdg_id < 2000:
+        return 0,0,0
+    elif pdg_id == 2112:
+        return 1,0,1
+    elif pdg_id == 2212:
+        return 1,1,0
+    elif pdg_id > 1000000000:
+        A = pdg_id % 1000 / 10
+        Z = pdg_id % 1000000 / 10000
+        return A, Z, A - Z
+    else:
+        return 1, 0, 0
 
-    def __init__(self, lower, upper, bins_dec):
-        import numpy as np
-        self.bins = np.logspace(lower, upper, (upper - lower) * bins_dec + 1)
-        self.grid = np.sqrt(self.bins[1:] * self.bins[:-1])
-        self.widths = self.bins[1:] - self.bins[:-1]
-        self.d = self.grid.size
-        info(
-            1, 'Energy grid initialized {0:3.1e} - {1:3.1e}, {2} bins'.format(
-                self.bins[0], self.bins[-1], self.grid.size))
-
-
-def get_AZN(corsikaid):
+def getAZN_corsika(corsikaid):
     """Returns mass number :math:`A`, charge :math:`Z` and neutron
     number :math:`N` of ``corsikaid``.
 
@@ -110,17 +139,22 @@ def corsikaid2pdg(corsika_id):
     elif corsika_id == 100:
         return 2112
     else:
-        A,Z,N = get_AZN(corsika_id)        
+        A,Z,N = getAZN_corsika(corsika_id)        
         # 10LZZZAAAI
-        pdgid = 1000000000
-        pdgid += 10*A
-        pdgid += 10000*Z
-        return pdgid
-        
-def pdg2corsikaid(pdgid):
-    """Conversion from nuclear PDG ID to CORSIKA ID"""
-    A = 1000260520 % 1000 / 10
-    Z = 1000260520 % 1000000 / 10000
+        pdg_id = 1000000000
+        pdg_id += 10*A
+        pdg_id += 10000*Z
+        return pdg_id
+
+def pdg2corsikaid(pdg_id):
+    """Conversion from nuclear PDG ID to CORSIKA ID.
+    
+    Note::
+    
+        PDG ID for nuclei is coded according to 10LZZZAAAI. For iron-52 it is 1000260520.
+    """
+    A = pdg_id % 1000 / 10
+    Z = pdg_id % 1000000 / 10000
     
     return A*100 + Z
     

@@ -521,7 +521,7 @@ class InteractionYields(object):
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
         if not force and interaction_model == self.iam:
-            info(2,'Model {0} already initialized.'.format(self.iam))
+            info(5,'Model {0} already initialized.'.format(self.iam))
             return False
         else:
             self._load(interaction_model)
@@ -617,7 +617,7 @@ class InteractionYields(object):
             else:
                 info(2, 'no inversion since daughter not leading', daughter)
         else:
-            info(10, 'no meson inversion in leading particle veto.', projectile, daughter)
+            info(20, 'no meson inversion in leading particle veto.', projectile, daughter)
 
         if (projectile, daughter) in self.mod_pprod.keys():
             info(2, 'using modified particle production for {0}/{1}'.format(projectile, daughter))
@@ -1116,12 +1116,12 @@ class HadAirCrossSections(object):
           Exception: if invalid name specified in argument ``interaction_model``
         """
         # Remove the _compact suffix, since this does not affect cross sections
-        info(2, 'Using cross sections of original model in compact mode')
+        info(5, 'Using cross sections of original model in compact mode')
         interaction_model = normalize_hadronic_model_name(interaction_model)
         interaction_model = interaction_model.split('_compact')[0]
 
         if interaction_model == self.iam and dbg > 0:
-            info(2, 'Model {0} already initialized.'.format(self.iam))
+            info(5, 'Model {0} already initialized.'.format(self.iam))
             return
         if interaction_model in self.cs_dict.keys():
             self.iam = interaction_model
@@ -1132,6 +1132,10 @@ class HadAirCrossSections(object):
                 'interaction model {0} available.'.format(interaction_model))
 
         self.cs = self.cs_dict[self.iam]
+
+    def __getitem__(self, projectile):
+        """Return the cross section in :math:`\\text{cm}^2` as a dictionary lookup."""
+        return self.get_cs(projectile)
 
     def get_cs(self, projectile, mbarn=False):
         """Returns inelastic ``projectile``-air cross-section
@@ -1154,22 +1158,19 @@ class HadAirCrossSections(object):
         if abs(projectile) in self.cs.keys():
             return scale * self.cs[projectile]
         elif abs(projectile) in [411, 421, 431, 15]:
-            info(5, message_templ.format('D', 'K+-'))
+            info(7, message_templ.format('D', 'K+-'))
             return scale * self.cs[321]
         elif abs(projectile) in [4332, 4232, 4132]:
-            info(5, message_templ.format('charmed baryon', 'nucleon'))
+            info(7, message_templ.format('charmed baryon', 'nucleon'))
             return scale * self.cs[2212]
-        # elif abs(projectile) == 22:
-        #     info(5, message_templ.format('photon', 'pion'))
-        #     return scale * self.cs[211]
         elif abs(projectile) > 2000 and abs(projectile) < 5000:
-            info(5, message_templ.format(projectile, 'nucleon'))
+            info(7, message_templ.format(projectile, 'nucleon'))
             return scale * self.cs[2212]
         elif 5 < abs(projectile) < 23 or 7000 < abs(projectile) < 7500:
-            info(5, 'returning 0 cross-section for lepton', projectile)
-            return 0.
+            info(7, 'returning 0 cross-section for lepton', projectile)
+            return np.zeros_like(self.cs[2212])
         else:
-            info(5, message_templ.format(projectile, 'pion'))
+            info(7, message_templ.format(projectile, 'pion'))
             return scale * self.cs[211]
 
     def __repr__(self):
