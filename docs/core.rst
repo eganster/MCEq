@@ -6,6 +6,11 @@ Core functionality
 
 ----------   
 
+.. automodule:: MCEq.particlemanager
+   :members:
+
+----------   
+
 .. automodule:: MCEq.data
    :members:
 

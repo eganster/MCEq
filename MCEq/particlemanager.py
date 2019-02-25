@@ -140,6 +140,29 @@ class MCEqParticle(object):
         self.name = _pname(self.pdg_id)
         #: (bool) particle is stable
         self.is_stable = not self.ctau < np.inf
+    
+    def init_custom_particle_data(self, name, pdg_id, ctau, mass, **kwargs):
+        """Add custom particle type. (Incomplete)"""
+        #: (int) Particle Data Group Monte Carlo particle ID
+        self.pdg_id = pdg_id
+        #: (bool) if it's an electromagnetic particle
+        self.is_em = kwargs.pop('is_em', abs(pdg_id) == 11 or pdg_id == 22)
+        #: (bool) particle is a nucleus (not yet implemented)
+        self.is_nucleus = kwargs.pop('is_nucleus', _pdata.is_nucleus(self.pdg_id))
+        #: (bool) particle is a hadron
+        self.is_hadron = kwargs.pop('is_hadron', _pdata.is_hadron(self.pdg_id))
+        #: (bool) particle is a hadron
+        self.is_lepton = kwargs.pop('is_lepton', _pdata.is_lepton(self.pdg_id))
+        #: Mass, charge, neutron number
+        self.A, self.Z, self.N = getAZN(self.pdg_id)
+        #: (float) ctau in cm
+        self.ctau = ctau
+        #: (float) mass in GeV
+        self.mass = mass
+        #: (str) species name in string representation
+        self.name = name
+        #: (bool) particle is stable
+        self.is_stable = not self.ctau < np.inf
 
     def set_cs(self, cs_db):
         """Set cross section adn recalculate the dependent variables"""
@@ -519,6 +542,7 @@ class ParticleManager(object):
         list occur."""
 
         self.n_cparticles = len(self.cascade_particles)
+        self.dim = self._energy_grid.d
         self.dim_states = self._energy_grid.d * self.n_cparticles
         self.muon_selector = np.zeros(self.dim_states, dtype='bool')
 
@@ -575,7 +599,7 @@ class ParticleManager(object):
 
         # Initialize particle objects
         particle_list = [
-            MCEqParticle(h, self._energy_grid, self._cs_db) for h in particles
+            MCEqParticle(p, self._energy_grid, self._cs_db) for p in particles
         ]
 
         # Sort by critical energy (= int_len ~== dec_length ~ int_cs/tau)
@@ -596,7 +620,7 @@ class ParticleManager(object):
 
         self.all_particles = self.cascade_particles + self.resonances
 
-    def add_tracking_particle(self, parent_list, child, alias):
+    def add_tracking_particle(self, parent_list, child_pdg, alias_name):
         """Allows tracking decay and particle production chains.
 
         Replaces previous ``obs_particle`` function that allowed to track
@@ -619,7 +643,8 @@ class ParticleManager(object):
             child (int): Child particle
         """
 
-        pass
+        particle = MCEqParticle(child_pdg, self._energy_grid, self._cs_db)
+        particle.is_alias = True
 
     def set_cross_sections_db(self, cs_db):
         """Let all particles know about their inelastic cross section"""

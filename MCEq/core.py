@@ -69,14 +69,13 @@ class MCEqRun(object):
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
-        self.cname = self.__class__.__name__
 
         # Save atmospheric parameters
         self.density_config = density_model
         self.theta_deg = theta_deg
 
         # Load particle production yields
-        self.yields_params = dict(interaction_model=interaction_model)
+        self.yields_params = dict(interaction_model=interaction_model, charm_model=None)
         #: handler for decay yield data of type :class:`MCEq.data.InteractionYields`
         self.y = InteractionYields(**self.yields_params)
         # Interaction matrices initialization flag
@@ -127,14 +126,13 @@ class MCEqRun(object):
         # TODO: this doesn't belong here
         self.pman.set_decay_channels(self.decays)
 
-        # Obtain total number of "cascade" particles and dimension of grid
-        self.dim_states = self.pman.dim_states
-
         # Set id of particles in observer category
         # self.pman.set_obs_particles(obs_ids)
 
-        #     self.e_weight = np.array(
-        # self.n_tot_species * list(self.y.e_bins[1:] - self.y.e_bins[:-1]))
+        # Obtain total number of "cascade" particles and dimension of grid
+        self.dim_states = self.pman.dim_states
+
+        self.matrix_builder = MatrixBuilder(self.pman, self.y, self.decays)
 
         # Initialize solution vector
         self.solution = np.zeros(self.dim_states)
@@ -144,12 +142,9 @@ class MCEqRun(object):
 
         # Initialize muon energy loss
         self._init_muon_energy_loss()
+
         # Set interaction model and compute grids and matrices
-        # if interaction_model is not None:
-        #     self.delay_pmod_init = False
-        self.set_interaction_model(interaction_model)
-        # else:
-        #     self.delay_pmod_init = True
+        self.set_interaction_model(interaction_model, force=True)
         
         # Set atmosphere and geometry TODO do not allow empty density model
         # if density_model is not None:
@@ -321,7 +316,7 @@ class MCEqRun(object):
     #          '\nto:', ', '.join([str(oid) for oid in self.obs_ids]))
 
     # self._init_alias_tables()
-        self._init_default_matrices(skip_D_matrix=False)
+        # self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=False)
 
     def set_interaction_model(self,
                               interaction_model,
@@ -341,7 +336,7 @@ class MCEqRun(object):
 
         info(1, interaction_model)
 
-        if self.iam_mat_initialized and not force and (
+        if not force and (
             (self.yields_params['interaction_model'],
              self.yields_params['charm_model']) == (interaction_model,
                                                     charm_model)):
@@ -361,13 +356,7 @@ class MCEqRun(object):
         self.pman.set_interaction_model(self.cs, self.y)
 
         # initialize matrices
-        self._init_default_matrices(skip_D_matrix=True)
-
-        self.iam_mat_initialized = True
-
-        # if self.delay_pmod_init:
-        #     self.delay_pmod_init = False
-        #     self.set_primary_model(*self.pm_params)
+        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=False)
 
     def set_primary_model(self, mclass, tag):
         """Sets primary flux model.
@@ -573,7 +562,7 @@ class MCEqRun(object):
         return int(init)
 
         if init and not delay_init:
-            self._init_default_matrices(skip_D_matrix=True)
+            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=True)
             return 0
 
     def unset_mod_pprod(self, dont_fill=False):
@@ -590,7 +579,7 @@ class MCEqRun(object):
         self.y.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
         if not dont_fill:
-            self._init_default_matrices(skip_D_matrix=True)
+            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=True)
 
     def solve(self, **kwargs):
         """Launches the solver.
@@ -615,232 +604,6 @@ class MCEqRun(object):
         else:
             raise Exception("Unknown integrator selection '{0}'.".format(
                 config['integrator']))
-
-    def _zero_mat(self):
-        """Returns a new square zero valued matrix with dimensions of grid.
-        """
-        return np.zeros((self.dim, self.dim))
-
-    def _csr_from_blocks(self, blocks):
-        """Construct a csr matrix from a dictionary of submatrices (blocks)
-        
-        Note::
-
-            It's super pain the a** to construct a properly indexed sparse matrix
-            directly from the blocks, since it totally messes up the order.
-        """
-        from scipy.sparse import csr_matrix
-
-        new_mat = np.zeros((self.dim_states,self.dim_states))
-        for (c,p), d in blocks.iteritems():
-            rc, rp = self.pman.mceqidx2pref[c], self.pman.mceqidx2pref[p]
-            new_mat[rc.lidx:rc.uidx,rp.lidx:rp.uidx] = d
-        
-        return csr_matrix(new_mat)
-
-    def _init_default_matrices(self, skip_D_matrix=False):
-        r"""Constructs the matrices for calculation.
-
-        These are:
-
-        - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
-        - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
-
-        For debug_levels >= 2 some general information about matrix shape and the number of
-        non-zero elements is printed. The intermediate matrices :math:`\boldsymbol{C}` and
-        :math:`\boldsymbol{D}` are deleted afterwards to save memory.
-
-        Set the ``skip_D_matrix`` flag to avoid recreating the decay matrix. This is not necessary
-        if, for example, particle production is modified, or the interaction model is changed.
-
-        Args:
-          skip_D_matrix (bool): Omit re-creating D matrix
-
-        """
-
-        # from scipy.sparse import bsr_matrix, coo_matrix
-        from itertools import product
-        info(
-            2, "Start filling matrices. Skip_D_matrix = {0}".format(
-                skip_D_matrix if self.iam_mat_initialized else False))
-
-        self._fill_matrices(
-            skip_D_matrix=skip_D_matrix if self.iam_mat_initialized else False)
-
-        cparts = self.pman.cascade_particles
-
-        # interaction part
-        # -I + C
-        # In first interaction mode it is just C
-        self.max_lint = 0.
-        for parent, child in product(cparts,cparts):
-            idx = (child.mceqidx, parent.mceqidx)
-            # Main diagonal
-            if ((child.mceqidx == parent.mceqidx) and 
-                parent.can_interact and not config['first_interaction_mode']):
-                # Substract unity from the main diagonals
-                info(10, 'substracting main C diagonal from',child.name, parent.name)
-                self.C_blocks[idx][np.diag_indices(self.dim)] -= 1
-
-            if idx not in self.C_blocks:
-                continue
-            self.max_lint = np.max(self.max_lint, parent.inverse_interaction_length())
-            self.C_blocks[idx] *= parent.inverse_interaction_length()
-        
-        self.int_m = self._csr_from_blocks(self.C_blocks)
-
-        # -I + D
-        if not self.iam_mat_initialized or not skip_D_matrix:
-            self.max_ldec = 0.
-            for parent, child in product(cparts,cparts):
-                idx = (child.mceqidx, parent.mceqidx)
-                # Main diagonal
-                if child.mceqidx == parent.mceqidx and not parent.is_stable:
-                    # Substract unity from the main diagonals
-                    info(10, 'substracting main D diagonal from',child.name, parent.name)
-                    self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
-                if idx not in self.D_blocks:
-                    continue
-                # Multiply with Lambda_dec
-                # Track the maximal decay length for the calculation of integration steps
-                self.max_ldec = max(self.max_ldec, parent.inverse_decay_length())
-                self.D_blocks[idx] *= parent.inverse_decay_length()
-
-        self.dec_m = self._csr_from_blocks(self.D_blocks)
-
-        for mname, mat in [('C', self.int_m), ('D', self.dec_m)]:
-            mat_density = (float(mat.nnz) / float(np.prod(mat.shape)))
-            info(5, "{0} Matrix info:".format(mname))
-            info(5, "    density    : {0:3.2%}".format(mat_density))
-            info(5, "    shape      : {0} x {1}".format(*mat.shape))
-            if config['use_sparse']:
-                info(5, "    nnz        : {0}".format(mat.nnz))
-            info(10, "    sum        :", mat.sum())
-
-        info(2, "Done filling matrices.")
-
-    def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
-        """Some recursive magic.
-        """
-        info(10, reclev * '\t', 'entering with', p.name)
-
-        for d in p.children:
-            info(10, reclev * '\t', 'following to', d.name)
-            if not d.is_resonance:
-                dprop = self._zero_mat()
-                self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.hadridx,
-                                         dprop)
-                # TODO: fix aliases
-                # alias = self._alias(p, d)
-
-                # Check if combination of mother and daughter has a special alias
-                # assigned and the index has not be replaced (i.e. pi, K, prompt)
-                # if not alias:
-                
-                propmat[(d.mceqidx,p_orig.mceqidx)] += dprop.dot(pprod_mat)
-                # else:
-                #     propmat[alias[0]:alias[1], pman[p_orig].lidx:pman[p_orig].
-                #             uidx] += dprop.dot(pprod_mat)
-
-                # TODO: fix aliases
-                # alt_score = self._alternate_score(p, d)
-                # if alt_score:
-                #     propmat[alt_score[0]:alt_score[1], pman[p_orig].
-                #             lidx:pman[p_orig].uidx] += dprop.dot(pprod_mat)
-
-            if config["debug_level"] >= 10:
-                pstr = 'res'
-                dstr = 'Mchain'
-                if idcs == p.hadridx:
-                    pstr = 'prop'
-                    dstr = 'Mprop'
-                info(10, reclev * '\t',
-                     'setting {0}[({1},{3})->({2},{4})]'.format(
-                         dstr, p_orig.name, d.name, pstr, 'prop'))
-
-            if d.is_mixed or d.is_resonance:
-                dres = self._zero_mat()
-                self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.residx,
-                                         dres)
-                reclev += 1
-                self._follow_chains(d, dres.dot(pprod_mat), p_orig, d.residx,
-                                    propmat, reclev)
-            else:
-                info(10, reclev * '\t', '\t terminating at', d.name)
-    
-    def _fill_matrices(self, skip_D_matrix=False):
-        """Generates the C and D matrix from scratch.
-        """
-        from collections import defaultdict
-
-        if not skip_D_matrix:
-            # Initialize empty D matrix
-            # TODO: Initialize directly to sparse bmat
-            # self.D = np.zeros((self.dim_states, self.dim_states))
-            self.D_blocks = defaultdict(lambda : self._zero_mat())
-            for p in self.pman.cascade_particles:
-                # Fill parts of the D matrix related to p as mother
-                if not p.is_stable and bool(p.children):
-                    self._follow_chains(
-                        p,
-                        np.diag(np.ones((self.dim))),
-                        p,
-                        p.hadridx,
-                        self.D_blocks,
-                        reclev=0)
-
-        # Initialize empty C matrix
-        # TODO: Initialize directly to sparse bmat
-        # self.C = np.zeros((self.dim_states, self.dim_states))
-        self.C_blocks = defaultdict(lambda : self._zero_mat())
-        for p in self.pman.cascade_particles:
-            # if p doesn't interact, skip interaction matrices
-            if (not p.is_projectile or
-                (config["adv_set"]["allowed_projectiles"] and abs(
-                    p.pdg_id) not in config["adv_set"]["allowed_projectiles"])):
-                info(
-                    2,
-                    'Particle production by {0} explicitly disabled'.format(
-                        p.pdg_id),
-                    condition=p.is_projectile)
-                continue
-            elif self.adv_set['disable_sec_interactions'] and p.pdg_id not in [
-                    2212, 2112
-            ]:
-                info(1, 'Veto secodary interaction of', p.pdg_id)
-                continue
-
-            # go through all secondaries
-            # @debug: y_matrix is copied twice in non_res and res
-            # calls to assign_y_...
-
-            for s in p.hadr_secondaries:
-
-                if s not in self.pman.cascade_particles:
-                    continue
-                if 'DPMJET' in self.y.iam and s.is_lepton:
-                    info(1, 'DPMJET hotfix direct leptons', s)
-                    continue
-                if self.adv_set['disable_direct_leptons'] and s.is_lepton:
-                    info(2, 'veto direct lepton', s)
-                    continue
-                if not s.is_resonance:
-                    cmat = self._zero_mat()
-                    self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
-                                            s.hadridx, cmat)
-                    self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
-                cmat = self._zero_mat()
-                self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
-                                        s.residx, cmat)
-                self._follow_chains(
-                    s,
-                    cmat,
-                    p,
-                    s.residx,
-                    self.C_blocks,
-                    reclev=1)
-
-    
 
     def _init_muon_energy_loss(self):
         # Muon energy loss
@@ -906,12 +669,6 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler, self.fa_vars)
         elif (config['kernel_config'] == 'CUDA'
-              and config['use_sparse'] is False):
-            kernel = time_solvers.solv_CUDA_dense
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.mu_loss_handler)
-
-        elif (config['kernel_config'] == 'CUDA'
               and config['use_sparse'] is True):
             kernel = time_solvers.solv_CUDA_sparse
             try:
@@ -955,8 +712,8 @@ class MCEqRun(object):
 
         max_X = self.density_model.max_X
         ri = self.density_model.r_X2rho
-        max_ldec = self.max_ldec
-
+        max_ldec = self.matrix_builder.max_ldec
+        max_lint = self.matrix_builder.max_lint
         info(2, 'X_surface = {0}'.format(max_X))
 
         dX_vec = []
@@ -993,13 +750,13 @@ class MCEqRun(object):
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
-        if (self.max_ldec * ri(config['max_density']) > self.max_lint
+        if (max_ldec * ri(config['max_density']) > max_lint
                 and config["leading_process"] == 'decays'):
             info(2, "using decays as leading eigenvalues")
             delta_X = lambda X: 0.95 / (max_ldec * ri(X))
         else:
             info(2, "using interactions as leading eigenvalues")
-            delta_X = lambda X: 0.95 / self.max_lint
+            delta_X = lambda X: 0.95 / max_lint
 
         while X < max_X:
             dX = delta_X(X)
@@ -1035,3 +792,234 @@ class MCEqRun(object):
         rho_inv_vec = np.array(rho_inv_vec)
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
+
+class MatrixBuilder(object):
+    """This class constructs the interaction and decay matrices."""
+    def __init__(self, particle_manager, yields, decays):
+        self.pman = particle_manager
+        self.dim_states = self.pman.dim_states
+        self.dim = self.pman.dim
+        self.y = yields
+        self.decays = decays
+        self.int_m = None
+        self.dec_m = None
+    
+    def construct_matrices(self, skip_decay_matrix=False):
+        r"""Constructs the matrices for calculation.
+
+        These are:
+
+        - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
+        - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
+
+        For debug_levels >= 2 some general information about matrix shape and the number of
+        non-zero elements is printed. The intermediate matrices :math:`\boldsymbol{C}` and
+        :math:`\boldsymbol{D}` are deleted afterwards to save memory.
+
+        Set the ``skip_decay_matrix`` flag to avoid recreating the decay matrix. This is not necessary
+        if, for example, particle production is modified, or the interaction model is changed.
+
+        Args:
+          skip_decay_matrix (bool): Omit re-creating D matrix
+
+        """
+
+        # from scipy.sparse import bsr_matrix, coo_matrix
+        from itertools import product
+        info(2, "Start filling matrices. Skip_decay_matrix = {0}".format(
+                skip_decay_matrix))
+
+        self._fill_matrices(skip_decay_matrix=skip_decay_matrix)
+
+        cparts = self.pman.cascade_particles
+
+        # interaction part
+        # -I + C
+        # In first interaction mode it is just C
+        self.max_lint = 0.
+        for parent, child in product(cparts,cparts):
+            idx = (child.mceqidx, parent.mceqidx)
+            # Main diagonal
+            if ((child.mceqidx == parent.mceqidx) and 
+                parent.can_interact and not config['first_interaction_mode']):
+                # Substract unity from the main diagonals
+                info(10, 'substracting main C diagonal from',child.name, parent.name)
+                self.C_blocks[idx][np.diag_indices(self.dim)] -= 1
+
+            if idx not in self.C_blocks:
+                continue
+            self.max_lint = np.max([self.max_lint, np.max(parent.inverse_interaction_length())])
+            self.C_blocks[idx] *= parent.inverse_interaction_length()
+        
+        self.int_m = self._csr_from_blocks(self.C_blocks)
+
+        # -I + D
+        if not skip_decay_matrix or self.dec_m is None:
+            self.max_ldec = 0.
+            for parent, child in product(cparts,cparts):
+                idx = (child.mceqidx, parent.mceqidx)
+                # Main diagonal
+                if child.mceqidx == parent.mceqidx and not parent.is_stable:
+                    # Substract unity from the main diagonals
+                    info(10, 'substracting main D diagonal from',child.name, parent.name)
+                    self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
+                if idx not in self.D_blocks:
+                    continue
+                # Multiply with Lambda_dec
+                # Track the maximal decay length for the calculation of integration steps
+                self.max_ldec = max([self.max_ldec, np.max(parent.inverse_decay_length())])
+                self.D_blocks[idx] *= parent.inverse_decay_length()
+
+        self.dec_m = self._csr_from_blocks(self.D_blocks)
+
+        for mname, mat in [('C', self.int_m), ('D', self.dec_m)]:
+            mat_density = (float(mat.nnz) / float(np.prod(mat.shape)))
+            info(5, "{0} Matrix info:".format(mname))
+            info(5, "    density    : {0:3.2%}".format(mat_density))
+            info(5, "    shape      : {0} x {1}".format(*mat.shape))
+            if config['use_sparse']:
+                info(5, "    nnz        : {0}".format(mat.nnz))
+            info(10, "    sum        :", mat.sum())
+
+        info(2, "Done filling matrices.")
+
+        return self.int_m, self.dec_m
+    
+    def _zero_mat(self):
+        """Returns a new square zero valued matrix with dimensions of grid.
+        """
+        return np.zeros((self.pman.dim, self.pman.dim))
+
+    def _csr_from_blocks(self, blocks):
+        """Construct a csr matrix from a dictionary of submatrices (blocks)
+        
+        Note::
+
+            It's super pain the a** to construct a properly indexed sparse matrix
+            directly from the blocks, since it totally messes up the order.
+        """
+        from scipy.sparse import csr_matrix
+
+        new_mat = np.zeros((self.dim_states,self.dim_states))
+        for (c,p), d in blocks.iteritems():
+            rc, rp = self.pman.mceqidx2pref[c], self.pman.mceqidx2pref[p]
+            new_mat[rc.lidx:rc.uidx,rp.lidx:rp.uidx] = d
+        
+        return csr_matrix(new_mat)
+
+    def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
+        """Some recursive magic.
+        """
+        info(10, reclev * '\t', 'entering with', p.name)
+
+        for d in p.children:
+            info(10, reclev * '\t', 'following to', d.name)
+            if not d.is_resonance:
+                dprop = self._zero_mat()
+                self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.hadridx,
+                                         dprop)
+                # TODO: fix aliases
+                # alias = self._alias(p, d)
+
+                # Check if combination of mother and daughter has a special alias
+                # assigned and the index has not be replaced (i.e. pi, K, prompt)
+                # if not alias:
+                
+                propmat[(d.mceqidx,p_orig.mceqidx)] += dprop.dot(pprod_mat)
+                # else:
+                #     propmat[alias[0]:alias[1], pman[p_orig].lidx:pman[p_orig].
+                #             uidx] += dprop.dot(pprod_mat)
+
+                # TODO: fix aliases
+                # alt_score = self._alternate_score(p, d)
+                # if alt_score:
+                #     propmat[alt_score[0]:alt_score[1], pman[p_orig].
+                #             lidx:pman[p_orig].uidx] += dprop.dot(pprod_mat)
+
+            if config["debug_level"] >= 10:
+                pstr = 'res'
+                dstr = 'Mchain'
+                if idcs == p.hadridx:
+                    pstr = 'prop'
+                    dstr = 'Mprop'
+                info(10, reclev * '\t',
+                     'setting {0}[({1},{3})->({2},{4})]'.format(
+                         dstr, p_orig.name, d.name, pstr, 'prop'))
+
+            if d.is_mixed or d.is_resonance:
+                dres = self._zero_mat()
+                self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.residx,
+                                         dres)
+                reclev += 1
+                self._follow_chains(d, dres.dot(pprod_mat), p_orig, d.residx,
+                                    propmat, reclev)
+            else:
+                info(10, reclev * '\t', '\t terminating at', d.name)
+    
+    def _fill_matrices(self, skip_decay_matrix=False):
+        """Generates the C and D matrix from scratch.
+        """
+        from collections import defaultdict
+
+        if not skip_decay_matrix or self.dec_m is None:
+            # Initialize empty D matrix
+            self.D_blocks = defaultdict(lambda : self._zero_mat())
+            for p in self.pman.cascade_particles:
+                # Fill parts of the D matrix related to p as mother
+                if not p.is_stable and bool(p.children):
+                    self._follow_chains(
+                        p,
+                        np.diag(np.ones((self.dim))),
+                        p,
+                        p.hadridx,
+                        self.D_blocks,
+                        reclev=0)
+
+        # Initialize empty C blocks
+        self.C_blocks = defaultdict(lambda : self._zero_mat())
+        for p in self.pman.cascade_particles:
+            # if p doesn't interact, skip interaction matrices
+            if (not p.is_projectile or
+                (config["adv_set"]["allowed_projectiles"] and abs(
+                    p.pdg_id) not in config["adv_set"]["allowed_projectiles"])):
+                info(
+                    2,
+                    'Particle production by {0} explicitly disabled'.format(
+                        p.pdg_id),
+                    condition=p.is_projectile)
+                continue
+            elif config['adv_set']['disable_sec_interactions'] and p.pdg_id not in [
+                    2212, 2112
+            ]:
+                info(1, 'Veto secodary interaction of', p.pdg_id)
+                continue
+
+            # go through all secondaries
+            # @debug: y_matrix is copied twice in non_res and res
+            # calls to assign_y_...
+
+            for s in p.hadr_secondaries:
+
+                if s not in self.pman.cascade_particles:
+                    continue
+                if 'DPMJET' in self.y.iam and s.is_lepton:
+                    info(1, 'DPMJET hotfix direct leptons', s)
+                    continue
+                if config['adv_set']['disable_direct_leptons'] and s.is_lepton:
+                    info(2, 'veto direct lepton', s)
+                    continue
+                if not s.is_resonance:
+                    cmat = self._zero_mat()
+                    self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
+                                            s.hadridx, cmat)
+                    self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
+                cmat = self._zero_mat()
+                self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
+                                        s.residx, cmat)
+                self._follow_chains(
+                    s,
+                    cmat,
+                    p,
+                    s.residx,
+                    self.C_blocks,
+                    reclev=1)
