@@ -24,7 +24,3 @@ Core functionality
 .. automodule:: MCEq.misc
    :members:
 
-----------
-
-.. automodule:: MCEq.msis_wrapper
-   :members:

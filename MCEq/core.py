@@ -360,10 +360,6 @@ class MCEqRun(object):
 
         self.pman.set_interaction_model(self.cs, self.y)
 
-        # Initialize default run
-        self._init_Lambda_int()
-        self._init_Lambda_dec()
-
         # initialize matrices
         self._init_default_matrices(skip_D_matrix=True)
 
@@ -384,10 +380,7 @@ class MCEqRun(object):
           to primary model **class**
           tag (tuple): positional argument list for model class
         """
-        # TODO: Remove primary model thing. If initial value not set, just throw a warning
-        # if self.delay_pmod_init:
-        #     info(5, 'Initialization delayed..')
-        #     return
+
         info(1, mclass.__name__, tag)
 
         # Initialize primary model object
@@ -483,17 +476,23 @@ class MCEqRun(object):
 
             mceq_instance.set_density_model(('CORSIKA', 'PL_SouthPole', 'January'))
 
-        More details about the choices can be found in :mod:`MCEq.density_profiles`. Calling
+        More details about the choices can be found in :mod:`MCEq.geometry.density_profiles`. Calling
         this method will issue a recalculation of the interpolation and the integration path.
 
         Args:
           density_config (tuple of strings): (parametrization type, arguments)
         """
-        import MCEq.density_profiles as dprof
+        import MCEq.geometry.density_profiles as dprof
 
         base_model, model_config = density_config
 
-        info(1, base_model, model_config)
+        available_models = ['MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal', 'GeneralizedTarget']
+        info(1, 'Setting density profile to', base_model, model_config)
+        if base_model not in available_models:
+            info(0, 'Unknown density model. Available choices are:\n', '\n'.join(available_models))
+            raise Exception('Choose a different profile.')
+
+        info(1, 'Setting density profile to', base_model, model_config)
 
         if base_model == 'MSIS00':
             self.density_model = dprof.MSIS00Atmosphere(*model_config)
@@ -504,15 +503,12 @@ class MCEqRun(object):
         elif base_model == 'AIRS':
             self.density_model = dprof.AIRSAtmosphere(*model_config)
         elif base_model == 'Isothermal':
-            if model_config is None:
-                self.density_model = dprof.IsothermalAtmosphere(None, None)
-            else:
-                self.density_model = dprof.IsothermalAtmosphere(*model_config)
+            self.density_model = dprof.IsothermalAtmosphere(*model_config)
         elif base_model == 'GeneralizedTarget':
             self.density_model = dprof.GeneralizedTarget()
         else:
             raise Exception(
-                'MCEqRun::set_density_model(): Unknown atmospheric base model.'
+                'Unknown atmospheric base model.'
             )
         self.density_config = density_config
 
@@ -536,8 +532,7 @@ class MCEqRun(object):
         info(1, theta_deg)
 
         if self.density_config[0] == 'GeneralizedTarget':
-            raise Exception(
-                'MCEqRun::set_theta_deg(): Target does not support angles.')
+            raise Exception('GeneralizedTarget does not support angles.')
 
         if self.density_model.theta_deg == theta_deg:
             info(2,
@@ -567,7 +562,7 @@ class MCEqRun(object):
           delay_init (bool): Prevent init of mceq matrices if you are
                              planning to add more modifications
         """
-
+        # TODO: Debug this
         info(
             1, '{0}/{1}, {2}, {3}'.format(prim_pdg, sec_pdg, x_func.__name__,
                                           str(x_func_args)))
@@ -588,82 +583,43 @@ class MCEqRun(object):
           skip_fill (bool): If `true` do not regenerate matrices
           (has to be done at a later step by hand)
         """
+        # TODO: Debug this
         from collections import defaultdict
-        info(1, 'modifications removed')
+        info(1, 'Particle production modifications reset to defaults.')
 
         self.y.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
         if not dont_fill:
             self._init_default_matrices(skip_D_matrix=True)
 
+    def solve(self, **kwargs):
+        """Launches the solver.
+
+        The setting `integrator` in the config file decides which solver
+        to launch, either the simple but accelerated explicit Euler solvers, 
+        :func:`MCEqRun._forward_euler` or, solvers from ODEPACK
+        :func:`MCEqRun._odepack`.
+
+        Args:
+          kwargs (dict): Arguments are passed directly to the solver methods.
+
+        """
+        info(
+            2, "solver={0} and sparse={1}".format(config['integrator'],
+                                                  config['use_sparse']))
+
+        if config['integrator'] != "odepack":
+            self._forward_euler(**kwargs)
+        elif config['integrator'] == 'odepack':
+            self._odepack(**kwargs)
+        else:
+            raise Exception("Unknown integrator selection '{0}'.".format(
+                config['integrator']))
+
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid.
         """
         return np.zeros((self.dim, self.dim))
-
-    def _init_muon_energy_loss(self):
-        # Muon energy loss
-        import cPickle as pickle
-        from os.path import join
-        if config['energy_solver'] != 'Semi-Lagrangian':
-            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
-        else:
-            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_edges.ppl')
-        self.mu_dEdX = pickle.load(
-            open(join(config['data_dir'], eloss_fname), 'rb')).astype(
-                self.fl_pr) * 1e-3  # ... to GeV
-
-        # Left index of first muon species and number of
-        # muon species including aliases
-        self.mu_loss_handler = None
-
-    def _init_Lambda_int(self):
-        """Initializes the interaction length vector according to the order
-        of particles in state vector.
-
-        :math:`\\boldsymbol{\\Lambda_{int}} = (1/\\lambda_{int,0},...,1/\\lambda_{int,N})`
-        """
-        self.Lambda_int = np.hstack([
-            p.inverse_interaction_length() for p in self.pman.cascade_particles
-        ])
-
-        self.max_lint = np.max(self.Lambda_int)
-
-    def _init_Lambda_dec(self):
-        """Initializes the decay length vector according to the order
-        of particles in state vector. The shortest decay length is determined
-        here as well.
-
-        :math:`\\boldsymbol{\\Lambda_{dec}} = (1/\\lambda_{dec,0},...,1/\\lambda_{dec,N})`
-        """
-        self.Lambda_dec = np.hstack(
-            [p.inverse_decay_length() for p in self.pman.cascade_particles])
-
-        self.max_ldec = np.max(self.Lambda_dec)
-
-    def _convert_to_sparse(self, skip_D_matrix):
-        """Converts interaction and decay matrix into sparse format using
-        :class:`scipy.sparse.csr_matrix`.
-
-        Args:
-          skip_D_matrix (bool): Don't convert D matrix if not needed
-        """
-        from scipy.sparse import csr_matrix
-        from MCEq.time_solvers import CUDASparseContext
-
-        info(2, "Converting to sparse (CSR) matrix format.")
-
-        self.int_m = csr_matrix(self.int_m)
-
-        if not self.iam_mat_initialized or not skip_D_matrix:
-            self.dec_m = csr_matrix(self.dec_m)
-
-        if config['kernel_config'] == 'CUDA':
-            try:
-                self.cuda_context.set_matrices(self.int_m, self.dec_m)
-            except AttributeError:
-                self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m, device_id=self.cuda_device)
 
     def _csr_from_blocks(self, blocks):
         """Construct a csr matrix from a dictionary of submatrices (blocks)
@@ -716,7 +672,7 @@ class MCEqRun(object):
         # interaction part
         # -I + C
         # In first interaction mode it is just C
-        
+        self.max_lint = 0.
         for parent, child in product(cparts,cparts):
             idx = (child.mceqidx, parent.mceqidx)
             # Main diagonal
@@ -728,12 +684,14 @@ class MCEqRun(object):
 
             if idx not in self.C_blocks:
                 continue
+            self.max_lint = np.max(self.max_lint, parent.inverse_interaction_length())
             self.C_blocks[idx] *= parent.inverse_interaction_length()
         
         self.int_m = self._csr_from_blocks(self.C_blocks)
 
         # -I + D
         if not self.iam_mat_initialized or not skip_D_matrix:
+            self.max_ldec = 0.
             for parent, child in product(cparts,cparts):
                 idx = (child.mceqidx, parent.mceqidx)
                 # Main diagonal
@@ -743,6 +701,9 @@ class MCEqRun(object):
                     self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
                 if idx not in self.D_blocks:
                     continue
+                # Multiply with Lambda_dec
+                # Track the maximal decay length for the calculation of integration steps
+                self.max_ldec = max(self.max_ldec, parent.inverse_decay_length())
                 self.D_blocks[idx] *= parent.inverse_decay_length()
 
         self.dec_m = self._csr_from_blocks(self.D_blocks)
@@ -879,29 +840,23 @@ class MCEqRun(object):
                     self.C_blocks,
                     reclev=1)
 
-    def solve(self, **kwargs):
-        """Launches the solver.
+    
 
-        The setting `integrator` in the config file decides which solver
-        to launch, either the simple but accelerated explicit Euler solvers, 
-        :func:`MCEqRun._forward_euler` or, solvers from ODEPACK
-        :func:`MCEqRun._odepack`.
-
-        Args:
-          kwargs (dict): Arguments are passed directly to the solver methods.
-
-        """
-        info(
-            2, "solver={0} and sparse={1}".format(config['integrator'],
-                                                  config['use_sparse']))
-
-        if config['integrator'] != "odepack":
-            self._forward_euler(**kwargs)
-        elif config['integrator'] == 'odepack':
-            self._odepack(**kwargs)
+    def _init_muon_energy_loss(self):
+        # Muon energy loss
+        import cPickle as pickle
+        from os.path import join
+        if config['energy_solver'] != 'Semi-Lagrangian':
+            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
         else:
-            raise Exception("Unknown integrator selection '{0}'.".format(
-                config['integrator']))
+            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_edges.ppl')
+        self.mu_dEdX = pickle.load(
+            open(join(config['data_dir'], eloss_fname), 'rb')).astype(
+                self.fl_pr) * 1e-3  # ... to GeV
+
+        # Left index of first muon species and number of
+        # muon species including aliases
+        self.mu_loss_handler = None
 
     # TODO: Move this to solvers and transition to scipy BDF
     def _odepack(self,
@@ -1022,6 +977,7 @@ class MCEqRun(object):
         import MCEq.energy_solvers as energy_solvers
 
         if config["enable_muon_energy_loss"] and self.mu_loss_handler is None:
+            # TODO: Make all solvers work with just muon selector
             if config["energy_solver"] == 'Semi-Lagrangian':
                 self.mu_loss_handler = energy_solvers.SemiLagrangian(
                     self._e_bins, self.mu_dEdX,
@@ -1056,6 +1012,12 @@ class MCEqRun(object):
         elif (config['kernel_config'] == 'CUDA'
               and config['use_sparse'] is True):
             kernel = time_solvers.solv_CUDA_sparse
+            try:
+                self.cuda_context.set_matrices(self.int_m, self.dec_m)
+            except AttributeError:
+                from MCEq.time_solvers import CUDASparseContext
+                self.cuda_context = CUDASparseContext(
+                    self.int_m, self.dec_m, device_id=self.cuda_device)
             args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs,
                     self.mu_loss_handler)
 
@@ -1112,6 +1074,7 @@ class MCEqRun(object):
             # Create variables for first interaction mode
 
             old_err_state = np.seterr(divide='ignore')
+            # TODO: this doesn't work anymore, fix
             fa_vars['Lambda_int'] = self.Lambda_int
             fa_vars['lint'] = 1 / self.Lambda_int
             np.seterr(**old_err_state)

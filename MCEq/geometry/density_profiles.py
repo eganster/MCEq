@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-:mod:`MCEq.density_profiles` - models of the Earth's atmosphere
+:mod:`MCEq.geometry.density_profiles` - models of the Earth's atmosphere
 ===============================================================
 
 This module includes classes and functions modeling the Earth's atmosphere.
@@ -34,7 +34,6 @@ Example:
 from abc import ABCMeta, abstractmethod
 from os.path import join
 import numpy as np
-import MCEq.geometry
 from MCEq.misc import theta_deg, theta_rad, info
 from numba import jit, double  # @UnresolvedImport
 
@@ -100,7 +99,8 @@ class EarthsAtmosphere():
     __metaclass__ = ABCMeta
 
     def __init__(self, *args, **kwargs):
-        self.geom = MCEq.geometry.EarthGeometry()
+        from MCEq.geometry.geometry import EarthGeometry
+        self.geom = EarthGeometry()
         self.thrad = None
         self.theta_deg = None
         self.max_X = None
@@ -1127,8 +1127,7 @@ class GeneralizedTarget(object):
             self.mat_list.append(
                 [start_position_cm, self.len_target, density, name])
 
-        if dbg > 0:
-            ("{0}::add_material(): Material '{1}' added. " +
+        info(2, "{0}::add_material(): Material '{1}' added. " +
              "location on path {2} to {3} m").format(
                  self.__class__.__name__, name, self.mat_list[-1][0],
                  self.mat_list[-1][1])
@@ -1274,14 +1273,14 @@ class GeneralizedTarget(object):
         """
 
         templ = '{0:^3} | {1:15} | {2:^9.3g}  | {3:^9.3g} | {4:^8.5g}'
-        info(mi_dbg_lev, '********************* List of materials *************************', no_caller=True)
+        info(min_dbg_lev, '********************* List of materials *************************', no_caller=True)
         head = '{0:3} | {1:15} | {2:9} | {3:9} | {4:9}'.format(
             'no', 'name', 'start [cm]', 'end [cm]', 'density [g/cm**3]')
-        info(mi_dbg_lev,  '-' * len(head), no_caller=True)
-        info(mi_dbg_lev,  head, no_caller=True)
-        info(mi_dbg_lev,  '-' * len(head), no_caller=True)
+        info(min_dbg_lev,  '-' * len(head), no_caller=True)
+        info(min_dbg_lev,  head, no_caller=True)
+        info(min_dbg_lev,  '-' * len(head), no_caller=True)
         for nm, mat in enumerate(self.mat_list):
-            info(mi_dbg_lev,  templ.format(nm, mat[3], mat[0], mat[1], mat[2]), no_caller=True)
+            info(min_dbg_lev,  templ.format(nm, mat[3], mat[0], mat[1], mat[2]), no_caller=True)
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
