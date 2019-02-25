@@ -104,7 +104,7 @@ class MCEqRun(object):
         # Default GPU device id for CUDA
         self.cuda_device = kwargs['GPU_id'] if 'GPU_id' in kwargs else 0
 
-        # Store array precision
+        # Store array precision (TODO: obsolete this for non GPU runs)
         if config['FP_precision'] == 32:
             self.fl_pr = np.float32
         elif config['FP_precision'] == 64:
@@ -128,7 +128,6 @@ class MCEqRun(object):
         self.pman.set_decay_channels(self.decays)
 
         # Obtain total number of "cascade" particles and dimension of grid
-        self.n_species = self.pman.n_species
         self.dim_states = self.pman.dim_states
 
         # Set id of particles in observer category
@@ -141,7 +140,7 @@ class MCEqRun(object):
         self.solution = np.zeros(self.dim_states)
 
         # Initialize empty state (particle density) vector
-        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
+        self.phi0 = np.zeros(self.dim_states)
 
         # Initialize muon energy loss
         self._init_muon_energy_loss()
@@ -180,128 +179,7 @@ class MCEqRun(object):
         """Energy grid (dimension)"""
         return self._energy_grid.d 
 
-    def _init_muon_energy_loss(self):
-        # Muon energy loss
-        import cPickle as pickle
-        from os.path import join
-        if config['energy_solver'] != 'Semi-Lagrangian':
-            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
-        else:
-            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_edges.ppl')
-        self.mu_dEdX = pickle.load(
-            open(join(config['data_dir'], eloss_fname), 'rb')).astype(
-                self.fl_pr) * 1e-3  # ... to GeV
-
-        # Left index of first muon species and number of
-        # muon species including aliases
-        self.mu_loss_handler = None
-
-    def _init_Lambda_int(self):
-        """Initializes the interaction length vector according to the order
-        of particles in state vector.
-
-        :math:`\\boldsymbol{\\Lambda_{int}} = (1/\\lambda_{int,0},...,1/\\lambda_{int,N})`
-        """
-        self.Lambda_int = np.hstack([
-            p.inverse_interaction_length() for p in self.pman.cascade_particles
-        ])
-
-        self.max_lint = np.max(self.Lambda_int)
-
-    def _init_Lambda_dec(self):
-        """Initializes the decay length vector according to the order
-        of particles in state vector. The shortest decay length is determined
-        here as well.
-
-        :math:`\\boldsymbol{\\Lambda_{dec}} = (1/\\lambda_{dec,0},...,1/\\lambda_{dec,N})`
-        """
-        self.Lambda_dec = np.hstack(
-            [p.inverse_decay_length() for p in self.pman.cascade_particles])
-
-        self.max_ldec = np.max(self.Lambda_dec)
-
-    def _convert_to_sparse(self, skip_D_matrix):
-        """Converts interaction and decay matrix into sparse format using
-        :class:`scipy.sparse.csr_matrix`.
-
-        Args:
-          skip_D_matrix (bool): Don't convert D matrix if not needed
-        """
-        from scipy.sparse import csr_matrix
-        from MCEq.time_solvers import CUDASparseContext
-
-        info(2, "Converting to sparse (CSR) matrix format.")
-
-        self.int_m = csr_matrix(self.int_m)
-
-        if not self.iam_mat_initialized or not skip_D_matrix:
-            self.dec_m = csr_matrix(self.dec_m)
-
-        if config['kernel_config'] == 'CUDA':
-            try:
-                self.cuda_context.set_matrices(self.int_m, self.dec_m)
-            except AttributeError:
-                self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m, device_id=self.cuda_device)
-
-    def _init_default_matrices(self, skip_D_matrix=False):
-        r"""Constructs the matrices for calculation.
-
-        These are:
-
-        - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
-        - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
-
-        For debug_levels >= 2 some general information about matrix shape and the number of
-        non-zero elements is printed. The intermediate matrices :math:`\boldsymbol{C}` and
-        :math:`\boldsymbol{D}` are deleted afterwards to save memory.
-
-        Set the ``skip_D_matrix`` flag to avoid recreating the decay matrix. This is not necessary
-        if, for example, particle production is modified, or the interaction model is changed.
-
-        Args:
-          skip_D_matrix (bool): Omit re-creating D matrix
-
-        """
-        info(
-            2, "Start filling matrices. Skip_D_matrix = {0}".format(
-                skip_D_matrix if self.iam_mat_initialized else False))
-
-        self._fill_matrices(
-            skip_D_matrix=skip_D_matrix if self.iam_mat_initialized else False)
-
-        # interaction part
-        # -I + C
-        if not config['first_interaction_mode']:
-            self.C[np.diag_indices(self.dim_states)] -= 1.
-            self.int_m = (self.C * self.Lambda_int).astype(self.fl_pr)
-
-        else:
-            self.int_m = (self.C * self.Lambda_int).astype(self.fl_pr)
-
-        del self.C
-
-        if not self.iam_mat_initialized or not skip_D_matrix:
-            # decay part
-            # -I + D
-            self.D[np.diag_indices(self.dim_states)] -= 1.
-            self.dec_m = (self.D * self.Lambda_dec).astype(self.fl_pr)
-
-            del self.D
-
-        if config['use_sparse']:
-            self._convert_to_sparse(skip_D_matrix)
-
-        for mname, mat in [('C', self.int_m), ('D', self.dec_m)]:
-            mat_density = (float(mat.nnz) / float(np.prod(mat.shape)))
-            info(5, "{0} Matrix info:".format(mname))
-            info(5, "    density    : {0:3.2%}".format(mat_density))
-            info(5, "    shape      : {0} x {1}".format(*mat.shape))
-            if config['use_sparse']:
-                info(5, "    nnz        : {0}".format(mat.nnz))
-            info(10, "    sum        :", mat.sum())
-
-        info(2, "Done filling matrices.")
+    
 
     # def _alias(self, mother, daughter):
     #     """Returns pair of alias indices, if ``mother``/``daughter`` combination
@@ -409,6 +287,7 @@ class MCEqRun(object):
                            ref[particle_name].uidx] * \
                     self._energy_grid.c ** mag
         else:
+            print particle_name, ref.pname2pref[particle_name].lidx, ref.pname2pref[particle_name].uidx
             res = sol[ref.pname2pref[particle_name].lidx:
                       ref.pname2pref[particle_name].uidx] * \
                 self._energy_grid.c ** mag
@@ -585,7 +464,7 @@ class MCEqRun(object):
         b_neutrons = np.array(
             [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
 
-        self.phi0 = np.zeros(self.dim_states).astype(self.fl_pr)
+        self.phi0 *= 0. 
 
         if n_protons > 0:
             p_lidx = self.pman[2212].lidx
@@ -722,10 +601,166 @@ class MCEqRun(object):
         """
         return np.zeros((self.dim, self.dim))
 
+    def _init_muon_energy_loss(self):
+        # Muon energy loss
+        import cPickle as pickle
+        from os.path import join
+        if config['energy_solver'] != 'Semi-Lagrangian':
+            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
+        else:
+            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_edges.ppl')
+        self.mu_dEdX = pickle.load(
+            open(join(config['data_dir'], eloss_fname), 'rb')).astype(
+                self.fl_pr) * 1e-3  # ... to GeV
+
+        # Left index of first muon species and number of
+        # muon species including aliases
+        self.mu_loss_handler = None
+
+    def _init_Lambda_int(self):
+        """Initializes the interaction length vector according to the order
+        of particles in state vector.
+
+        :math:`\\boldsymbol{\\Lambda_{int}} = (1/\\lambda_{int,0},...,1/\\lambda_{int,N})`
+        """
+        self.Lambda_int = np.hstack([
+            p.inverse_interaction_length() for p in self.pman.cascade_particles
+        ])
+
+        self.max_lint = np.max(self.Lambda_int)
+
+    def _init_Lambda_dec(self):
+        """Initializes the decay length vector according to the order
+        of particles in state vector. The shortest decay length is determined
+        here as well.
+
+        :math:`\\boldsymbol{\\Lambda_{dec}} = (1/\\lambda_{dec,0},...,1/\\lambda_{dec,N})`
+        """
+        self.Lambda_dec = np.hstack(
+            [p.inverse_decay_length() for p in self.pman.cascade_particles])
+
+        self.max_ldec = np.max(self.Lambda_dec)
+
+    def _convert_to_sparse(self, skip_D_matrix):
+        """Converts interaction and decay matrix into sparse format using
+        :class:`scipy.sparse.csr_matrix`.
+
+        Args:
+          skip_D_matrix (bool): Don't convert D matrix if not needed
+        """
+        from scipy.sparse import csr_matrix
+        from MCEq.time_solvers import CUDASparseContext
+
+        info(2, "Converting to sparse (CSR) matrix format.")
+
+        self.int_m = csr_matrix(self.int_m)
+
+        if not self.iam_mat_initialized or not skip_D_matrix:
+            self.dec_m = csr_matrix(self.dec_m)
+
+        if config['kernel_config'] == 'CUDA':
+            try:
+                self.cuda_context.set_matrices(self.int_m, self.dec_m)
+            except AttributeError:
+                self.cuda_context = CUDASparseContext(
+                    self.int_m, self.dec_m, device_id=self.cuda_device)
+
+    def _csr_from_blocks(self, blocks):
+        """Construct a csr matrix from a dictionary of submatrices (blocks)
+        
+        Note::
+
+            It's super pain the a** to construct a properly indexed sparse matrix
+            directly from the blocks, since it totally messes up the order.
+        """
+        from scipy.sparse import csr_matrix
+
+        new_mat = np.zeros((self.dim_states,self.dim_states))
+        for (c,p), d in blocks.iteritems():
+            rc, rp = self.pman.mceqidx2pref[c], self.pman.mceqidx2pref[p]
+            new_mat[rc.lidx:rc.uidx,rp.lidx:rp.uidx] = d
+        
+        return csr_matrix(new_mat)
+
+    def _init_default_matrices(self, skip_D_matrix=False):
+        r"""Constructs the matrices for calculation.
+
+        These are:
+
+        - :math:`\boldsymbol{M}_{int} = (-\boldsymbol{1} + \boldsymbol{C}){\boldsymbol{\Lambda}}_{int}`,
+        - :math:`\boldsymbol{M}_{dec} = (-\boldsymbol{1} + \boldsymbol{D}){\boldsymbol{\Lambda}}_{dec}`.
+
+        For debug_levels >= 2 some general information about matrix shape and the number of
+        non-zero elements is printed. The intermediate matrices :math:`\boldsymbol{C}` and
+        :math:`\boldsymbol{D}` are deleted afterwards to save memory.
+
+        Set the ``skip_D_matrix`` flag to avoid recreating the decay matrix. This is not necessary
+        if, for example, particle production is modified, or the interaction model is changed.
+
+        Args:
+          skip_D_matrix (bool): Omit re-creating D matrix
+
+        """
+
+        # from scipy.sparse import bsr_matrix, coo_matrix
+        from itertools import product
+        info(
+            2, "Start filling matrices. Skip_D_matrix = {0}".format(
+                skip_D_matrix if self.iam_mat_initialized else False))
+
+        self._fill_matrices(
+            skip_D_matrix=skip_D_matrix if self.iam_mat_initialized else False)
+
+        cparts = self.pman.cascade_particles
+
+        # interaction part
+        # -I + C
+        # In first interaction mode it is just C
+        
+        for parent, child in product(cparts,cparts):
+            idx = (child.mceqidx, parent.mceqidx)
+            # Main diagonal
+            if ((child.mceqidx == parent.mceqidx) and 
+                parent.can_interact and not config['first_interaction_mode']):
+                # Substract unity from the main diagonals
+                info(10, 'substracting main C diagonal from',child.name, parent.name)
+                self.C_blocks[idx][np.diag_indices(self.dim)] -= 1
+
+            if idx not in self.C_blocks:
+                continue
+            self.C_blocks[idx] *= parent.inverse_interaction_length()
+        
+        self.int_m = self._csr_from_blocks(self.C_blocks)
+
+        # -I + D
+        if not self.iam_mat_initialized or not skip_D_matrix:
+            for parent, child in product(cparts,cparts):
+                idx = (child.mceqidx, parent.mceqidx)
+                # Main diagonal
+                if child.mceqidx == parent.mceqidx and not parent.is_stable:
+                    # Substract unity from the main diagonals
+                    info(10, 'substracting main D diagonal from',child.name, parent.name)
+                    self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
+                if idx not in self.D_blocks:
+                    continue
+                self.D_blocks[idx] *= parent.inverse_decay_length()
+
+        self.dec_m = self._csr_from_blocks(self.D_blocks)
+
+        for mname, mat in [('C', self.int_m), ('D', self.dec_m)]:
+            mat_density = (float(mat.nnz) / float(np.prod(mat.shape)))
+            info(5, "{0} Matrix info:".format(mname))
+            info(5, "    density    : {0:3.2%}".format(mat_density))
+            info(5, "    shape      : {0} x {1}".format(*mat.shape))
+            if config['use_sparse']:
+                info(5, "    nnz        : {0}".format(mat.nnz))
+            info(10, "    sum        :", mat.sum())
+
+        info(2, "Done filling matrices.")
+
     def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
         """Some recursive magic.
         """
-        pman = self.pman
         info(10, reclev * '\t', 'entering with', p.name)
 
         for d in p.children:
@@ -740,8 +775,8 @@ class MCEqRun(object):
                 # Check if combination of mother and daughter has a special alias
                 # assigned and the index has not be replaced (i.e. pi, K, prompt)
                 # if not alias:
-                propmat[d.lidx:d.uidx, 
-                        p_orig.lidx:p_orig.uidx] += dprop.dot(pprod_mat)
+                
+                propmat[(d.mceqidx,p_orig.mceqidx)] += dprop.dot(pprod_mat)
                 # else:
                 #     propmat[alias[0]:alias[1], pman[p_orig].lidx:pman[p_orig].
                 #             uidx] += dprop.dot(pprod_mat)
@@ -771,16 +806,17 @@ class MCEqRun(object):
                                     propmat, reclev)
             else:
                 info(10, reclev * '\t', '\t terminating at', d.name)
-
+    
     def _fill_matrices(self, skip_D_matrix=False):
         """Generates the C and D matrix from scratch.
         """
-        
-        # pref = self.pdg2pref
+        from collections import defaultdict
+
         if not skip_D_matrix:
             # Initialize empty D matrix
             # TODO: Initialize directly to sparse bmat
-            self.D = np.zeros((self.dim_states, self.dim_states))
+            # self.D = np.zeros((self.dim_states, self.dim_states))
+            self.D_blocks = defaultdict(lambda : self._zero_mat())
             for p in self.pman.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children):
@@ -789,12 +825,13 @@ class MCEqRun(object):
                         np.diag(np.ones((self.dim))),
                         p,
                         p.hadridx,
-                        self.D,
+                        self.D_blocks,
                         reclev=0)
 
         # Initialize empty C matrix
         # TODO: Initialize directly to sparse bmat
-        self.C = np.zeros((self.dim_states, self.dim_states))
+        # self.C = np.zeros((self.dim_states, self.dim_states))
+        self.C_blocks = defaultdict(lambda : self._zero_mat())
         for p in self.pman.cascade_particles:
             # if p doesn't interact, skip interaction matrices
             if (not p.is_projectile or
@@ -830,7 +867,7 @@ class MCEqRun(object):
                     cmat = self._zero_mat()
                     self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
                                             s.hadridx, cmat)
-                    self.C[s.lidx:s.uidx, p.lidx:p.uidx] += cmat
+                    self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
                 cmat = self._zero_mat()
                 self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
                                         s.residx, cmat)
@@ -839,7 +876,7 @@ class MCEqRun(object):
                     cmat,
                     p,
                     s.residx,
-                    self.C,
+                    self.C_blocks,
                     reclev=1)
 
     def solve(self, **kwargs):
@@ -866,6 +903,7 @@ class MCEqRun(object):
             raise Exception("Unknown integrator selection '{0}'.".format(
                 config['integrator']))
 
+    # TODO: Move this to solvers and transition to scipy BDF
     def _odepack(self,
                  dXstep=.1,
                  initial_depth=0.0,
@@ -1078,10 +1116,10 @@ class MCEqRun(object):
             fa_vars['lint'] = 1 / self.Lambda_int
             np.seterr(**old_err_state)
 
-            fa_vars['ipl'] = self.pname2pref['p'].lidx
-            fa_vars['ipu'] = self.pname2pref['p'].uidx
-            fa_vars['inl'] = self.pname2pref['n'].lidx
-            fa_vars['inu'] = self.pname2pref['n'].uidx
+            fa_vars['ipl'] = self.pman[2212].lidx
+            fa_vars['ipu'] = self.pman[2212].uidx
+            fa_vars['inl'] = self.pman[2112].lidx
+            fa_vars['inu'] = self.pman[2112].uidx
 
             fa_vars[
                 'pint'] = 1 / self.Lambda_int[fa_vars['ipl']:fa_vars['ipu']]
@@ -1133,7 +1171,7 @@ class MCEqRun(object):
             step += 1
 
         # Integrate
-        dX_vec = np.array(dX_vec, dtype=self.fl_pr)
-        rho_inv_vec = np.array(rho_inv_vec, dtype=self.fl_pr)
+        dX_vec = np.array(dX_vec)
+        rho_inv_vec = np.array(rho_inv_vec)
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs

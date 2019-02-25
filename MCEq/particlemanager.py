@@ -20,6 +20,26 @@ from particletools.tables import PYTHIAParticleData
 info(5, 'Initialization of PYTHIAParticleData object')
 _pdata = PYTHIAParticleData()
 
+backward_compatible_namestr = {
+    'nu_mu': 'numu',
+    'nu_mubar': 'antinumu',
+    'nu_e': 'nue',
+    'nu_ebar': 'antinue',
+    'nu_tau': 'nutau',
+    'nu_taubar': 'antinutau'
+}
+
+
+# Replace particle names for neutrinos with those used in previous MCEq versions
+def _pname(pdg_id_or_name):
+    """Replace some particle names from pythia database with those from previous
+    MCEq versions for backward compatibility."""
+
+    pythia_name = _pdata.name(pdg_id_or_name)
+    if pythia_name in backward_compatible_namestr:
+        return backward_compatible_namestr[pythia_name]
+    return pythia_name
+
 
 class MCEqParticle(object):
     """Bundles different particle properties for simplified
@@ -31,32 +51,40 @@ class MCEqParticle(object):
       cs_db (object, optional): reference to an instance of :class:`InteractionYields`
     """
 
-    def __init__(self, pdg_id, energy_grid=None, cs_db=None):
+    def __init__(self,
+                 pdg_id,
+                 energy_grid=None,
+                 cs_db=None,
+                 init_pdata_defaults=True):
 
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
         #: (bool) particle is a nucleus (not yet implemented)
-        self.is_nucleus = _pdata.is_nucleus(pdg_id)
+        self.is_nucleus = False
         #: (bool) particle is a hadron
-        self.is_hadron = _pdata.is_hadron(pdg_id)
+        self.is_hadron = False
         #: (bool) particle is a hadron
-        self.is_lepton = _pdata.is_lepton(pdg_id)
+        self.is_lepton = False
+        #: (float) ctau in cm
+        self.ctau = None
+        #: (float) mass in GeV
+        self.mass = None
+        #: (bool) particle is an alias (PDG ID encodes special scoring behavior)
+        self.name = None
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(pdg_id)
-        #: (float) ctau
-        self.ctau = _pdata.ctau(pdg_id)
-        #: (bool) particle is an alias (PDG ID encodes special scoring behavior)
+        #: (bool) particle has both, hadron and resonance properties
         self.is_alias = False
         #: (str) species name in string representation
-        self.name = _pdata.name(pdg_id)
-        #: (bool) particle has both, hadron and resonance properties
         self.is_mixed = False
         #: (bool) if particle has just resonance behavior
         self.is_resonance = False
         #: (bool) particle is interacting projectile
         self.is_projectile = False
         #: (bool) particle is stable
-        self.is_stable = not self.ctau < np.inf
+        self.is_stable = False
+        #: (bool) can_interact
+        self.can_interact = False
         #: decay channels if any
         self.decay_channels = {}
         #: (int) Particle Data Group Monte Carlo particle ID
@@ -78,9 +106,6 @@ class MCEqParticle(object):
         # Energy and cross section dependent inits
         self.current_cross_sections = None
         self._energy_grid = energy_grid
-        if self._energy_grid is not None and cs_db is not None:
-            #: interaction cross section in 1/cm2
-            self.set_cs(cs_db)
 
         # Variables for hadronic interaction
         self.current_hadronic_model = None
@@ -91,11 +116,40 @@ class MCEqParticle(object):
         self.children = []
         self.decay_dists = {}
 
+        if init_pdata_defaults:
+            self._init_defaults_from_pythia_database()
+
+        if self._energy_grid is not None and cs_db is not None:
+            #: interaction cross section in 1/cm2
+            self.set_cs(cs_db)
+
+    def _init_defaults_from_pythia_database(self):
+        #: (bool) particle is a nucleus (not yet implemented)
+        self.is_nucleus = _pdata.is_nucleus(self.pdg_id)
+        #: (bool) particle is a hadron
+        self.is_hadron = _pdata.is_hadron(self.pdg_id)
+        #: (bool) particle is a hadron
+        self.is_lepton = _pdata.is_lepton(self.pdg_id)
+        #: Mass, charge, neutron number
+        self.A, self.Z, self.N = getAZN(self.pdg_id)
+        #: (float) ctau in cm
+        self.ctau = _pdata.ctau(self.pdg_id)
+        #: (float) mass in GeV
+        self.mass = _pdata.mass(self.pdg_id)
+        #: (str) species name in string representation
+        self.name = _pname(self.pdg_id)
+        #: (bool) particle is stable
+        self.is_stable = not self.ctau < np.inf
+
     def set_cs(self, cs_db):
         """Set cross section adn recalculate the dependent variables"""
 
         self.current_cross_sections = cs_db.iam
         self.cs = cs_db[self.pdg_id]
+        if sum(self.cs) > 0:
+            self.can_interact = True
+        else:
+            self.can_interact = False
         self._critical_energy()
         self._calculate_mixing_energy()
 
@@ -110,17 +164,20 @@ class MCEqParticle(object):
 
         if self.pdg_id in hadronic_db.projectiles:
             self.is_projectile = True
-            self.hadr_secondaries = [pmanager.pdg2pref[pid] for pid in 
-                hadronic_db.secondary_dict[self.pdg_id] if abs(pid) < 7000]
+            self.hadr_secondaries = [
+                pmanager.pdg2pref[pid]
+                for pid in hadronic_db.secondary_dict[self.pdg_id]
+                if abs(pid) < 7000
+            ]
             self.hadr_yields = {}
             for s in self.hadr_secondaries:
-                self.hadr_yields[s] = hadronic_db.yields[(self.pdg_id, s.pdg_id)]
+                self.hadr_yields[s] = hadronic_db.yields[(self.pdg_id,
+                                                          s.pdg_id)]
         else:
             self.is_projectile = False
             self.hadr_secondaries = []
             self.hadr_yields = {}
-        
-    
+
     def set_decay_channels(self, decay_db, pmanager):
         """Populates decay channel and energy distributions"""
 
@@ -131,9 +188,9 @@ class MCEqParticle(object):
             return
 
         if self.pdg_id not in decay_db.mothers:
-            raise Exception('Unstable particle without decay distribution:', 
-                self.pdg_id, self.name)
-        
+            raise Exception('Unstable particle without decay distribution:',
+                            self.pdg_id, self.name)
+
         self.children = []
         self.children = [pmanager[d] for d in decay_db.daughters(self.pdg_id)]
         self.decay_dists = {}
@@ -143,7 +200,7 @@ class MCEqParticle(object):
     def is_secondary(self, pdg_id):
         """`True` if `self` is projectile and produces `pdg_id` particles."""
         return pdg_id in self.hadr_secondaries
-    
+
     def is_child(self, pdg_id):
         """If particle decays into `pdg_id` return True."""
         return pdg_id in self.children
@@ -196,8 +253,7 @@ class MCEqParticle(object):
           (float): :math:`\\frac{\\rho}{\\lambda_{dec}}` in 1/cm
         """
         try:
-            dlen = _pdata.mass(self.pdg_id) / \
-                _pdata.ctau(self.pdg_id) / self._energy_grid.c
+            dlen = self.mass / self.ctau / self._energy_grid.c
             if cut:
                 dlen[0:self.mix_idx] = 0.
             # TODO: verify how much this affects the result
@@ -220,7 +276,7 @@ class MCEqParticle(object):
         #: unit conversion - :math:`\text{mbarn} \to \text{cm}^2`
         mbarn2cm2 = GeVcm**2 / GeV2mbarn
         if mbarn:
-            return mbarn2cm2*self.cs
+            return mbarn2cm2 * self.cs
 
         return self.cs
 
@@ -259,7 +315,7 @@ class MCEqParticle(object):
             self._energy_grid.w)[:eidx + 1]
 
         return xl_grid, xl_dist
-    
+
     def get_xf_dist(self,
                     energy,
                     prim_pdg,
@@ -334,8 +390,7 @@ class MCEqParticle(object):
           (float): :math:`\\frac{m\\ 6.4 \\text{km}}{c\\tau}` in GeV
         """
         try:
-            self.E_crit = _pdata.mass(self.pdg_id) * 6.4e5 / _pdata.ctau(
-                self.pdg_id)
+            self.E_crit = self.mass * 6.4e5 / self.ctau
         except ZeroDivisionError:
             self.E_crit = np.inf
 
@@ -452,7 +507,7 @@ class ParticleManager(object):
 
         # Cross section database
         self._cs_db = cs_db
-        
+
         self._init_categories(particle_pdg_list=pdg_id_list)
 
         self._update_particle_tables()
@@ -462,9 +517,9 @@ class ParticleManager(object):
     def _update_particle_tables(self):
         """Update internal mapping tables after changes to the particle
         list occur."""
-    
-        self.n_species = len(self.cascade_particles)
-        self.dim_states = self._energy_grid.d * self.n_species
+
+        self.n_cparticles = len(self.cascade_particles)
+        self.dim_states = self._energy_grid.d * self.n_cparticles
         self.muon_selector = np.zeros(self.dim_states, dtype='bool')
 
         for p in self.all_particles:
@@ -472,10 +527,12 @@ class ParticleManager(object):
             self.pname2mceqidx[p.name] = p.mceqidx
             self.mceqidx2pdg[p.mceqidx] = p.pdg_id
             self.mceqidx2pname[p.mceqidx] = p.name
+            self.mceqidx2pref[p.mceqidx] = p
             self.pdg2pref[p.pdg_id] = p
             self.pname2pref[p.name] = p
 
-            # TODO: This thing has to change to something like "partiles with continuous losses"
+            # TODO: This thing has to change to something like
+            # "partiles with continuous losses"
             # Select all positions of muon species in the state vector
             if abs(p.pdg_id) == 13:
                 self.muon_selector[p.lidx:p.uidx] = True
@@ -518,15 +575,16 @@ class ParticleManager(object):
 
         # Initialize particle objects
         particle_list = [
-            MCEqParticle(h, self._energy_grid, self._cs_db)
-            for h in particles
+            MCEqParticle(h, self._energy_grid, self._cs_db) for h in particles
         ]
 
         # Sort by critical energy (= int_len ~== dec_length ~ int_cs/tau)
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
 
         # Cascade particles will "live" on the grid and have an mceqidx assigned
-        self.cascade_particles = [p for p in particle_list if not p.is_resonance]
+        self.cascade_particles = [
+            p for p in particle_list if not p.is_resonance
+        ]
 
         # These particles will only exist implicitely and integated out
         self.resonances = [p for p in particle_list if p.is_resonance]
@@ -562,7 +620,6 @@ class ParticleManager(object):
         """
 
         pass
-        pass
 
     def set_cross_sections_db(self, cs_db):
         """Let all particles know about their inelastic cross section"""
@@ -588,7 +645,7 @@ class ParticleManager(object):
                 p.set_cs(cs_db)
             if p.current_hadronic_model != hadronic_db.iam:
                 p.set_hadronic_channels(hadronic_db, self)
-        
+
         self._update_particle_tables()
 
     def __getitem__(self, pdg_id_or_name):
@@ -596,7 +653,7 @@ class ParticleManager(object):
         if isinstance(pdg_id_or_name, six.integer_types):
             return self.pdg2pref[pdg_id_or_name]
         else:
-            return self.pdg2pref[_pdata.name(pdg_id_or_name)]
+            return self.pdg2pref[_pname(pdg_id_or_name)]
 
     def keys(self):
         """Returns pdg_ids of all particles"""
@@ -630,18 +687,18 @@ class ParticleManager(object):
     #         for pr_id in prompt_ids:
     #             self.alias_table[(pr_id, lep_id)] = 7000 + lep_id  # prompt
 
-        # # check if leptons coming from mesons located in obs_ids should be
-        # # in addition scored in a separate category (73xx)
-        # self.obs_table = {}
-        # if self.obs_ids is not None:
-        #     for obs_id in self.obs_ids:
-        #         if obs_id in self.pdg2pref.keys():
-        #             self.obs_table.update({
-        #                 (obs_id, 12): 7312,
-        #                 (obs_id, 13): 7313,
-        #                 (obs_id, 14): 7314,
-        #                 (obs_id, 16): 7316
-        #             })
+    # # check if leptons coming from mesons located in obs_ids should be
+    # # in addition scored in a separate category (73xx)
+    # self.obs_table = {}
+    # if self.obs_ids is not None:
+    #     for obs_id in self.obs_ids:
+    #         if obs_id in self.pdg2pref.keys():
+    #             self.obs_table.update({
+    #                 (obs_id, 12): 7312,
+    #                 (obs_id, 13): 7313,
+    #                 (obs_id, 14): 7314,
+    #                 (obs_id, 16): 7316
+    #             })
 
     def __repr__(self):
         str_out = ""
@@ -681,7 +738,7 @@ class ParticleManager(object):
         info(
             min_dbg_lev,
             "\nTotal number of species:",
-            self.n_species,
+            self.n_cparticles,
             no_caller=True)
 
         # list particle indices
