@@ -134,96 +134,6 @@ def solv_numpy(nsteps,
     return phc, grid_sol
 
 
-def solv_CUDA_dense(nsteps,
-                    dX,
-                    rho_inv,
-                    int_m,
-                    dec_m,
-                    phi,
-                    grid_idcs,
-                    mu_loss_handler):
-    """`NVIDIA CUDA cuBLAS <https://developer.nvidia.com/cublas>`_ implementation
-    of forward-euler integration.
-
-    Function requires a working :mod:`numbapro` installation. It is typically slower
-    compared to :func:`solv_MKL_sparse` but it depends on your hardware.
-
-    Args:
-      nsteps (int): number of integration steps
-      dX (numpy.array[nsteps]): vector of step-sizes :math:`\\Delta X_i` in g/cm**2
-      rho_inv (numpy.array[nsteps]): vector of density values :math:`\\frac{1}{\\rho(X_i)}`
-      int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
-      dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
-      phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
-    Returns:
-      numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
-    """
-
-    fl_pr = None
-    if config['FP_precision'] == 32:
-        fl_pr = np.float32
-    elif config['FP_precision'] == 64:
-        fl_pr = np.float64
-    else:
-        raise Exception("solv_CUDA_dense(): Unknown precision specified.")
-
-    # if config['enable_muon_energyloss']:
-    #     raise NotImplementedError('solv_CUDA_dense(): ' +
-    #         'Energy loss not imlemented for this solver.')
-
-    if config['enable_muon_energy_loss']:
-        raise NotImplementedError(
-            'solv_CUDA_dense(): ' +
-            'Energy loss not imlemented for this solver.')
-
-    #=======================================================================
-    # Setup GPU stuff and upload data to it
-    #=======================================================================
-    try:
-        from accelerate.cuda.blas import Blas
-        from accelerate.cuda import cuda
-    except ImportError:
-        raise Exception("solv_CUDA_dense(): Numbapro CUDA libaries not " +
-                        "installed.\nCan not use GPU.")
-    cubl = Blas()
-    m, n = int_m.shape
-    stream = cuda.stream()
-    cu_int_m = cuda.to_device(int_m.astype(fl_pr), stream)
-    cu_dec_m = cuda.to_device(dec_m.astype(fl_pr), stream)
-    cu_curr_phi = cuda.to_device(phi.astype(fl_pr), stream)
-    cu_delta_phi = cuda.device_array(phi.shape, dtype=fl_pr)
-
-    from time import time
-    start = time()
-
-    for step in xrange(nsteps):
-        cubl.gemv(
-            trans='N',
-            m=m,
-            n=n,
-            alpha=fl_pr(1.0),
-            A=cu_int_m,
-            x=cu_curr_phi,
-            beta=fl_pr(0.0),
-            y=cu_delta_phi)
-        cubl.gemv(
-            trans='N',
-            m=m,
-            n=n,
-            alpha=fl_pr(rho_inv[step]),
-            A=cu_dec_m,
-            x=cu_curr_phi,
-            beta=fl_pr(1.0),
-            y=cu_delta_phi)
-        cubl.axpy(alpha=fl_pr(dX[step]), x=cu_delta_phi, y=cu_curr_phi)
-
-    info(2, "Performance: {0:6.2f}ms/iteration".format(
-        1e3 * (time() - start) / float(nsteps)))
-
-    return cu_curr_phi.copy_to_host(), []
-
-
 class CUDASparseContext(object):
     def __init__(self, int_m, dec_m, device_id=0):
 
@@ -504,3 +414,100 @@ def solv_MKL_sparse(nsteps,
             1e3 * (time() - start) / float(nsteps)))
 
     return npphi, grid_sol
+
+# TODO: Debug this and transition to BDF
+    def _odepack(dXstep=.1,
+                 initial_depth=0.0,
+                 int_grid=None,
+                 grid_var='X',
+                 *args,
+                 **kwargs):
+        """Solves the transport equations with solvers from ODEPACK.
+
+        Args:
+          dXstep (float): external step size (adaptive sovlers make more steps internally)
+          initial_depth (float): starting depth in g/cm**2
+          int_grid (list): list of depths at which results are recorded
+          grid_var (str): Can be depth `X` or something else (currently only `X` supported)
+
+        """
+        from scipy.integrate import ode
+        ri = self.density_model.r_X2rho
+
+        if config['enable_muon_energy_loss']:
+            raise NotImplementedError(
+                'Energy loss not imlemented for this solver.')
+
+        # Functional to solve
+        def dPhi_dX(X, phi, *args):
+            return self.int_m.dot(phi) + self.dec_m.dot(ri(X) * phi)
+
+        # Jacobian doesn't work with sparse matrices, and any precision
+        # or speed advantage disappear if used with dense algebra
+        def jac(X, phi, *args):
+            # print 'jac', X, phi
+            return (self.int_m + self.dec_m * ri(X)).todense()
+
+        # Initial condition
+        phi0 = np.copy(self.phi0)
+
+        # Initialize variables
+        grid_sol = []
+
+        # Setup solver
+        r = ode(dPhi_dX).set_integrator(
+            with_jacobian=False, **config['ode_params'])
+
+        if int_grid is not None:
+            initial_depth = int_grid[0]
+            int_grid = int_grid[1:]
+            max_X = int_grid[-1]
+            grid_sol.append(phi0)
+
+        else:
+            max_X = self.density_model.max_X
+
+        info(
+            1,
+            'your X-grid is shorter then the material',
+            condition=max_X < self.density_model.max_X)
+        info(
+            1,
+            'your X-grid exceeds the dimentsions of the material',
+            condition=max_X > self.density_model.max_X)
+
+        # Initial value
+        r.set_initial_value(phi0, initial_depth)
+
+        info(
+            2, 'initial depth: {0:3.2e}, maximal depth {1:}'.format(
+                initial_depth, max_X))
+
+        start = time()
+        if int_grid is None:
+            i = 0
+            while r.successful() and (r.t + dXstep) < max_X - 1:
+                info(5, "Solving at depth X =", r.t, condition=(i % 5000) == 0)
+                r.integrate(r.t + dXstep)
+                i += 1
+            if r.t < max_X:
+                r.integrate(max_X)
+            # Do last step to make sure the rational number max_X is reached
+            r.integrate(max_X)
+        else:
+            for i, Xi in enumerate(int_grid):
+                info(5, 'integrating at X =', Xi, condition=i % 10 == 0)
+
+                while r.successful() and (r.t + dXstep) < Xi:
+                    r.integrate(r.t + dXstep)
+
+                # Make sure the integrator arrives at requested step
+                r.integrate(Xi)
+                # Store the solution on grid
+                grid_sol.append(r.y)
+
+        info(2,
+             'time elapsed during integration: {1} sec'.format(time() - start))
+
+        self.solution = r.y
+        self.grid_sol = grid_sol
