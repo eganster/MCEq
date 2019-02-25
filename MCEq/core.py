@@ -1027,11 +1027,6 @@ class MCEqRun(object):
             args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
                     grid_idcs, self.mu_loss_handler)
 
-        elif (config['kernel_config'] == 'MIC'
-              and config['use_sparse'] is True):
-            kernel = time_solvers.solv_XeonPHI_sparse
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.mu_loss_handler)
         else:
             raise Exception(
                 "Unsupported integrator settings '{0}/{1}'.".format(
