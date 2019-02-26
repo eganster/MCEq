@@ -295,7 +295,6 @@ def info(min_dbg_level, *message, **kwargs):
         Anatoli Fedynitch (DESY)
         Jonas Heinze (DESY)
     """
-
     condition = kwargs.pop('condition', True)
     blank_caller = kwargs.pop('blank_caller', False)
     no_caller = kwargs.pop('no_caller', False)

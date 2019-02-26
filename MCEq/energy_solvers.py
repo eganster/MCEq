@@ -131,7 +131,7 @@ class DifferentialOperator(object):
         self.log_h = np.log(ebins[1] / ebins[0])
         self.dim_e = ebins.size - 1
         self.mu_selector = mu_selector
-        self.mu_lidx, self.nmuspec = 0, 2
+        self.nmuspec = np.count_nonzero(self.mu_selector)/self.dim_e
         self.dEdX = mu_dEdX
         self.op = self.construct_differential_operator()
 

@@ -72,6 +72,9 @@ config = {
     # in the 'obs_' category
     "obs_ids": None,  # Example ["eta", "eta*", "etaC", "omega", "phi"],
 
+    # Definition of prompt: default ctau < 0.123 cm (that of D0)
+    "prompt_ctau": 0.123,
+
     # Average mass of target (for cross section calculations)
     # Change parameter only in combination with interaction model setting.
     # By default all inclusive cross sections are calculated for air targets

@@ -75,7 +75,8 @@ class MCEqRun(object):
         self.theta_deg = theta_deg
 
         # Load particle production yields
-        self.yields_params = dict(interaction_model=interaction_model, charm_model=None)
+        self.yields_params = dict(
+            interaction_model=interaction_model, charm_model=None)
         #: handler for decay yield data of type :class:`MCEq.data.InteractionYields`
         self.y = InteractionYields(**self.yields_params)
         # Interaction matrices initialization flag
@@ -126,6 +127,9 @@ class MCEqRun(object):
         # TODO: this doesn't belong here
         self.pman.set_decay_channels(self.decays)
 
+        #Print particle list after tracking particles have been initialized
+        self.pman.print_particle_tables(2)
+
         # Set id of particles in observer category
         # self.pman.set_obs_particles(obs_ids)
 
@@ -145,7 +149,7 @@ class MCEqRun(object):
 
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(interaction_model, force=True)
-        
+
         # Set atmosphere and geometry TODO do not allow empty density model
         # if density_model is not None:
         self.set_density_model(self.density_config)
@@ -168,57 +172,11 @@ class MCEqRun(object):
     def e_widths(self):
         """Energy grid (bin widths)"""
         return self._energy_grid.w
-    
+
     @property
     def dim(self):
         """Energy grid (dimension)"""
-        return self._energy_grid.d 
-
-    
-
-    # def _alias(self, mother, daughter):
-    #     """Returns pair of alias indices, if ``mother``/``daughter`` combination
-    #     belongs to an alias.
-
-    #     Args:
-    #       mother (int): PDG ID of mother particle
-    #       daughter (int): PDG ID of daughter particle
-    #     Returns:
-    #       tuple(int, int): lower and upper index in state vector of alias or ``None``
-    #     """
-
-    #     ref = self.pdg2pref
-    #     abs_mo = np.abs(mother)
-    #     abs_d = np.abs(daughter)
-    #     si_d = np.sign(daughter)
-    #     if (abs_mo, abs_d) in self.alias_table.keys():
-    #         return (ref[si_d * self.alias_table[(abs_mo, abs_d)]].lidx,
-    #                 ref[si_d * self.alias_table[(abs_mo, abs_d)]].uidx)
-    #     else:
-    #         return None
-
-    # def _alternate_score(self, mother, daughter):
-    #     """Returns pair of special score indices, if ``mother``/``daughter`` combination
-    #     belongs to the ``obs_`` category.
-
-    #     Args:
-    #       mother (int): PDG ID of mother particle
-    #       daughter (int): PDG ID of daughter particle
-    #     Returns:
-    #       tuple(int, int): lower and upper index in state vector of ``obs_`` group or ``None``
-    #     """
-
-    #     info(20, 'Look-up for particles to score in `obs`', mother, daughter)
-
-    #     ref = self.pdg2pref
-    #     abs_mo = np.abs(mother)
-    #     abs_d = np.abs(daughter)
-    #     si_d = np.sign(daughter)
-    #     if (abs_mo, abs_d) in self.obs_table.keys():
-    #         return (ref[si_d * self.obs_table[(abs_mo, abs_d)]].lidx,
-    #                 ref[si_d * self.obs_table[(abs_mo, abs_d)]].uidx)
-    #     else:
-    #         return None
+        return self._energy_grid.d
 
     def get_solution(self,
                      particle_name,
@@ -258,7 +216,7 @@ class MCEqRun(object):
         # Account for the
 
         res = np.zeros(self._energy_grid.d)
-        ref = self.pman
+        ref = self.pman.pname2pref
         sol = None
         if grid_idx is None:
             sol = self.solution
@@ -268,55 +226,28 @@ class MCEqRun(object):
             sol = self.grid_sol[grid_idx]
 
         if particle_name.startswith('total'):
+            # Note this has changed from previous MCEq versions,
+            # since pi_ and k_ prefixes are mere tracking counters
+            # and no full particle species anymore
             lep_str = particle_name.split('_')[1]
-            for prefix in ('pr_', 'pi_', 'k_', ''):
-                particle_name = prefix + lep_str
-                res += sol[ref[particle_name].lidx:
-                           ref[particle_name].uidx] * \
-                    self._energy_grid.c ** mag
+            res = sol[ref[lep_str].lidx:ref[lep_str].
+                      uidx] * self._energy_grid.c**mag
+
         elif particle_name.startswith('conv'):
             lep_str = particle_name.split('_')[1]
-            for prefix in ('pi_', 'k_', ''):
+            for prefix in ('pi_', 'k_'):
                 particle_name = prefix + lep_str
-                res += sol[ref[particle_name].lidx:
-                           ref[particle_name].uidx] * \
-                    self._energy_grid.c ** mag
+                res += sol[ref[particle_name].lidx:ref[particle_name].
+                           uidx] * self._energy_grid.c**mag
+
         else:
-            print particle_name, ref.pname2pref[particle_name].lidx, ref.pname2pref[particle_name].uidx
-            res = sol[ref.pname2pref[particle_name].lidx:
-                      ref.pname2pref[particle_name].uidx] * \
-                self._energy_grid.c ** mag
+            res = sol[ref[particle_name].lidx:ref[particle_name].
+                      uidx] * self._energy_grid.c**mag
+
         if not integrate:
             return res
         else:
             return res * self._energy_grid.w
-
-    # def set_obs_particles(self, obs_ids):
-    #     """Adds a list of mother particle strings which decay products
-    #     should be scored in the special ``obs_`` category.
-
-    #     Decay and interaction matrix will be regenerated automatically
-    #     after performing this call.
-
-    #     Args:
-    #       obs_ids (list of strings): mother particle names
-    #     """
-
-    #     #TODO: Forward this to ParticleManager
-    #     if obs_ids is None:
-    #         self.obs_ids = None
-    #         return
-    #     self.obs_ids = []
-    #     for obs_id in obs_ids:
-    #         try:
-    #             self.obs_ids.append(int(obs_id))
-    #         except ValueError:
-    #             self.obs_ids.append(self.modtab.modname2pdg[obs_id])
-    #     info(5, 'Converted names:', ', '.join([str(oid) for oid in obs_ids]),
-    #          '\nto:', ', '.join([str(oid) for oid in self.obs_ids]))
-
-    # self._init_alias_tables()
-        # self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=False)
 
     def set_interaction_model(self,
                               interaction_model,
@@ -336,10 +267,9 @@ class MCEqRun(object):
 
         info(1, interaction_model)
 
-        if not force and (
-            (self.yields_params['interaction_model'],
-             self.yields_params['charm_model']) == (interaction_model,
-                                                    charm_model)):
+        if not force and ((self.yields_params['interaction_model'],
+                           self.yields_params['charm_model']) == (
+                               interaction_model, charm_model)):
             info(2, 'Skip, since current model identical to',
                  interaction_model + '/' + str(charm_model) + '.')
             return
@@ -356,7 +286,8 @@ class MCEqRun(object):
         self.pman.set_interaction_model(self.cs, self.y)
 
         # initialize matrices
-        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=False)
+        self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
+            skip_decay_matrix=False)
 
     def set_primary_model(self, mclass, tag):
         """Sets primary flux model.
@@ -387,8 +318,7 @@ class MCEqRun(object):
         self.phi0[self.pman[2212].lidx:self.pman[2212].uidx] = 1e-4 * p_top
 
         if 2112 in self.pman.keys() and not self.pman[2112].is_resonance:
-            self.phi0[self.pman[2112].lidx:self.pman[2112].
-                      uidx] = 1e-4 * n_top
+            self.phi0[self.pman[2112].lidx:self.pman[2112].uidx] = 1e-4 * n_top
         else:
             self.phi0[self.pman[2212].lidx:self.pman[2212].
                       uidx] += 1e-4 * n_top
@@ -413,7 +343,7 @@ class MCEqRun(object):
 
         from scipy.linalg import solve
         from MCEq.misc import getAZN_corsika
-        
+
         info(
             2, 'corsika_id={0}, particle energy={1:5.3g} GeV'.format(
                 corsika_id, E))
@@ -423,8 +353,8 @@ class MCEqRun(object):
         ewidths = self._energy_grid.w
 
         n_nucleons, n_protons, n_neutrons = getAZN_corsika(corsika_id)
-        En = E/float(n_nucleons)
-        
+        En = E / float(n_nucleons)
+
         if En < np.min(self._energy_grid.c):
             raise Exception('energy per nucleon too low for primary ' +
                             str(corsika_id))
@@ -446,7 +376,7 @@ class MCEqRun(object):
         b_neutrons = np.array(
             [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
 
-        self.phi0 *= 0. 
+        self.phi0 *= 0.
 
         if n_protons > 0:
             p_lidx = self.pman[2212].lidx
@@ -475,10 +405,14 @@ class MCEqRun(object):
 
         base_model, model_config = density_config
 
-        available_models = ['MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal', 'GeneralizedTarget']
-        info(1, 'Setting density profile to', base_model, model_config)
+        available_models = [
+            'MSIS00', 'MSIS00_IC', 'CORSIKA', 'AIRS', 'Isothermal',
+            'GeneralizedTarget'
+        ]
+
         if base_model not in available_models:
-            info(0, 'Unknown density model. Available choices are:\n', '\n'.join(available_models))
+            info(0, 'Unknown density model. Available choices are:\n',
+                 '\n'.join(available_models))
             raise Exception('Choose a different profile.')
 
         info(1, 'Setting density profile to', base_model, model_config)
@@ -496,9 +430,7 @@ class MCEqRun(object):
         elif base_model == 'GeneralizedTarget':
             self.density_model = dprof.GeneralizedTarget()
         else:
-            raise Exception(
-                'Unknown atmospheric base model.'
-            )
+            raise Exception('Unknown atmospheric base model.')
         self.density_config = density_config
 
         if self.theta_deg is not None and base_model != 'GeneralizedTarget':
@@ -562,7 +494,8 @@ class MCEqRun(object):
         return int(init)
 
         if init and not delay_init:
-            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=True)
+            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
+                skip_decay_matrix=True)
             return 0
 
     def unset_mod_pprod(self, dont_fill=False):
@@ -579,7 +512,8 @@ class MCEqRun(object):
         self.y.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
         if not dont_fill:
-            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(skip_decay_matrix=True)
+            self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
+                skip_decay_matrix=True)
 
     def solve(self, **kwargs):
         """Launches the solver.
@@ -617,8 +551,6 @@ class MCEqRun(object):
             open(join(config['data_dir'], eloss_fname), 'rb')).astype(
                 self.fl_pr) * 1e-3  # ... to GeV
 
-        # Left index of first muon species and number of
-        # muon species including aliases
         self.mu_loss_handler = None
 
     def _forward_euler(self, int_grid=None, grid_var='X'):
@@ -645,16 +577,13 @@ class MCEqRun(object):
             # TODO: Make all solvers work with just muon selector
             if config["energy_solver"] == 'Semi-Lagrangian':
                 self.mu_loss_handler = energy_solvers.SemiLagrangian(
-                    self._e_bins, self.mu_dEdX,
-                    self.muon_selector)
+                    self._e_bins, self.mu_dEdX, self.muon_selector)
             elif config["energy_solver"] == 'Chang-Cooper':
                 self.mu_loss_handler = energy_solvers.ChangCooper(
-                    self._e_bins, self.mu_dEdX,
-                    self.muon_selector)
+                    self._e_bins, self.mu_dEdX, self.muon_selector)
             elif config["energy_solver"] == 'Direct':
                 self.mu_loss_handler = energy_solvers.DifferentialOperator(
-                    self.e_bins, self.mu_dEdX,
-                    self.pman.muon_selector)
+                    self.e_bins, self.mu_dEdX, self.pman.muon_selector)
             else:
                 raise Exception('Unknown energy solver.')
 
@@ -724,6 +653,7 @@ class MCEqRun(object):
         grid_step = 0
         grid_idcs = []
         fa_vars = {}
+        # TODO: Remove first interaction mode and replace with 2 chained runs
         if config['first_interaction_mode']:
             # Create variables for first interaction mode
 
@@ -793,8 +723,10 @@ class MCEqRun(object):
 
         self.integration_path = len(dX_vec), dX_vec, rho_inv_vec, grid_idcs
 
+
 class MatrixBuilder(object):
     """This class constructs the interaction and decay matrices."""
+
     def __init__(self, particle_manager, yields, decays):
         self.pman = particle_manager
         self.dim_states = self.pman.dim_states
@@ -803,7 +735,7 @@ class MatrixBuilder(object):
         self.decays = decays
         self.int_m = None
         self.dec_m = None
-    
+
     def construct_matrices(self, skip_decay_matrix=False):
         r"""Constructs the matrices for calculation.
 
@@ -826,7 +758,8 @@ class MatrixBuilder(object):
 
         # from scipy.sparse import bsr_matrix, coo_matrix
         from itertools import product
-        info(2, "Start filling matrices. Skip_decay_matrix = {0}".format(
+        info(
+            2, "Start filling matrices. Skip_decay_matrix = {0}".format(
                 skip_decay_matrix))
 
         self._fill_matrices(skip_decay_matrix=skip_decay_matrix)
@@ -837,37 +770,43 @@ class MatrixBuilder(object):
         # -I + C
         # In first interaction mode it is just C
         self.max_lint = 0.
-        for parent, child in product(cparts,cparts):
+        for parent, child in product(cparts, cparts):
             idx = (child.mceqidx, parent.mceqidx)
             # Main diagonal
-            if ((child.mceqidx == parent.mceqidx) and 
-                parent.can_interact and not config['first_interaction_mode']):
+            if ((child.mceqidx == parent.mceqidx) and parent.can_interact
+                    and not config['first_interaction_mode']):
                 # Substract unity from the main diagonals
-                info(10, 'substracting main C diagonal from',child.name, parent.name)
+                info(10, 'substracting main C diagonal from', child.name,
+                     parent.name)
                 self.C_blocks[idx][np.diag_indices(self.dim)] -= 1
 
             if idx not in self.C_blocks:
                 continue
-            self.max_lint = np.max([self.max_lint, np.max(parent.inverse_interaction_length())])
+            self.max_lint = np.max(
+                [self.max_lint,
+                 np.max(parent.inverse_interaction_length())])
             self.C_blocks[idx] *= parent.inverse_interaction_length()
-        
+
         self.int_m = self._csr_from_blocks(self.C_blocks)
 
         # -I + D
         if not skip_decay_matrix or self.dec_m is None:
             self.max_ldec = 0.
-            for parent, child in product(cparts,cparts):
+            for parent, child in product(cparts, cparts):
                 idx = (child.mceqidx, parent.mceqidx)
                 # Main diagonal
                 if child.mceqidx == parent.mceqidx and not parent.is_stable:
                     # Substract unity from the main diagonals
-                    info(10, 'substracting main D diagonal from',child.name, parent.name)
+                    info(10, 'substracting main D diagonal from', child.name,
+                         parent.name)
                     self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
                 if idx not in self.D_blocks:
                     continue
                 # Multiply with Lambda_dec
                 # Track the maximal decay length for the calculation of integration steps
-                self.max_ldec = max([self.max_ldec, np.max(parent.inverse_decay_length())])
+                self.max_ldec = max(
+                    [self.max_ldec,
+                     np.max(parent.inverse_decay_length())])
                 self.D_blocks[idx] *= parent.inverse_decay_length()
 
         self.dec_m = self._csr_from_blocks(self.D_blocks)
@@ -884,7 +823,7 @@ class MatrixBuilder(object):
         info(2, "Done filling matrices.")
 
         return self.int_m, self.dec_m
-    
+
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid.
         """
@@ -900,11 +839,11 @@ class MatrixBuilder(object):
         """
         from scipy.sparse import csr_matrix
 
-        new_mat = np.zeros((self.dim_states,self.dim_states))
-        for (c,p), d in blocks.iteritems():
+        new_mat = np.zeros((self.dim_states, self.dim_states))
+        for (c, p), d in blocks.iteritems():
             rc, rp = self.pman.mceqidx2pref[c], self.pman.mceqidx2pref[p]
-            new_mat[rc.lidx:rc.uidx,rp.lidx:rp.uidx] = d
-        
+            new_mat[rc.lidx:rc.uidx, rp.lidx:rp.uidx] = d
+
         return csr_matrix(new_mat)
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
@@ -918,23 +857,7 @@ class MatrixBuilder(object):
                 dprop = self._zero_mat()
                 self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.hadridx,
                                          dprop)
-                # TODO: fix aliases
-                # alias = self._alias(p, d)
-
-                # Check if combination of mother and daughter has a special alias
-                # assigned and the index has not be replaced (i.e. pi, K, prompt)
-                # if not alias:
-                
-                propmat[(d.mceqidx,p_orig.mceqidx)] += dprop.dot(pprod_mat)
-                # else:
-                #     propmat[alias[0]:alias[1], pman[p_orig].lidx:pman[p_orig].
-                #             uidx] += dprop.dot(pprod_mat)
-
-                # TODO: fix aliases
-                # alt_score = self._alternate_score(p, d)
-                # if alt_score:
-                #     propmat[alt_score[0]:alt_score[1], pman[p_orig].
-                #             lidx:pman[p_orig].uidx] += dprop.dot(pprod_mat)
+                propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
 
             if config["debug_level"] >= 10:
                 pstr = 'res'
@@ -942,9 +865,10 @@ class MatrixBuilder(object):
                 if idcs == p.hadridx:
                     pstr = 'prop'
                     dstr = 'Mprop'
-                info(10, reclev * '\t',
-                     'setting {0}[({1},{3})->({2},{4})]'.format(
-                         dstr, p_orig.name, d.name, pstr, 'prop'))
+                info(
+                    10, reclev * '\t',
+                    'setting {0}[({1},{3})->({2},{4})]'.format(
+                        dstr, p_orig.name, d.name, pstr, 'prop'))
 
             if d.is_mixed or d.is_resonance:
                 dres = self._zero_mat()
@@ -955,7 +879,7 @@ class MatrixBuilder(object):
                                     propmat, reclev)
             else:
                 info(10, reclev * '\t', '\t terminating at', d.name)
-    
+
     def _fill_matrices(self, skip_decay_matrix=False):
         """Generates the C and D matrix from scratch.
         """
@@ -963,7 +887,7 @@ class MatrixBuilder(object):
 
         if not skip_decay_matrix or self.dec_m is None:
             # Initialize empty D matrix
-            self.D_blocks = defaultdict(lambda : self._zero_mat())
+            self.D_blocks = defaultdict(lambda: self._zero_mat())
             for p in self.pman.cascade_particles:
                 # Fill parts of the D matrix related to p as mother
                 if not p.is_stable and bool(p.children):
@@ -976,30 +900,26 @@ class MatrixBuilder(object):
                         reclev=0)
 
         # Initialize empty C blocks
-        self.C_blocks = defaultdict(lambda : self._zero_mat())
+        self.C_blocks = defaultdict(lambda: self._zero_mat())
         for p in self.pman.cascade_particles:
             # if p doesn't interact, skip interaction matrices
             if (not p.is_projectile or
-                (config["adv_set"]["allowed_projectiles"] and abs(
-                    p.pdg_id) not in config["adv_set"]["allowed_projectiles"])):
+                (abs(p.pdg_id) not in config["adv_set"]["allowed_projectiles"])
+                ):
                 info(
-                    2,
-                    'Particle production by {0} explicitly disabled'.format(
-                        p.pdg_id),
+                    5,
+                    'Particle production by {0} disabled'.format(p.pdg_id),
                     condition=p.is_projectile)
                 continue
-            elif config['adv_set']['disable_sec_interactions'] and p.pdg_id not in [
-                    2212, 2112
-            ]:
+
+            elif config['adv_set'][
+                    'disable_sec_interactions'] and p.pdg_id not in [
+                        2212, 2112
+                    ]:
                 info(1, 'Veto secodary interaction of', p.pdg_id)
                 continue
 
-            # go through all secondaries
-            # @debug: y_matrix is copied twice in non_res and res
-            # calls to assign_y_...
-
             for s in p.hadr_secondaries:
-
                 if s not in self.pman.cascade_particles:
                     continue
                 if 'DPMJET' in self.y.iam and s.is_lepton:
@@ -1008,18 +928,15 @@ class MatrixBuilder(object):
                 if config['adv_set']['disable_direct_leptons'] and s.is_lepton:
                     info(2, 'veto direct lepton', s)
                     continue
+
                 if not s.is_resonance:
                     cmat = self._zero_mat()
                     self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
                                             s.hadridx, cmat)
                     self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
+
                 cmat = self._zero_mat()
                 self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
                                         s.residx, cmat)
                 self._follow_chains(
-                    s,
-                    cmat,
-                    p,
-                    s.residx,
-                    self.C_blocks,
-                    reclev=1)
+                    s, cmat, p, s.residx, self.C_blocks, reclev=1)
