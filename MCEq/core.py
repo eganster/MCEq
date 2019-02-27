@@ -63,7 +63,7 @@ class MCEqRun(object):
     """
 
     def __init__(self, interaction_model, density_model, primary_model,
-                 theta_deg, adv_set, obs_ids, **kwargs):
+                 theta_deg, adv_set, **kwargs):
 
         # from particletools.tables import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
@@ -124,8 +124,12 @@ class MCEqRun(object):
 
         # Create particle database
         self.pman = ParticleManager(particle_list, self._energy_grid, self.cs)
-        # TODO: this doesn't belong here
+        # Attach decay channels
         self.pman.set_decay_channels(self.decays)
+        # TODO Mofdify this later to work with HDF database
+        # Initialize muon energy loss
+        self._init_muon_energy_loss()
+        self.pman.set_continuous_losses({13: self.mu_dEdX, -13: self.mu_dEdX})
 
         #Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
@@ -133,19 +137,13 @@ class MCEqRun(object):
         # Set id of particles in observer category
         # self.pman.set_obs_particles(obs_ids)
 
-        # Obtain total number of "cascade" particles and dimension of grid
-        self.dim_states = self.pman.dim_states
-
         self.matrix_builder = MatrixBuilder(self.pman, self.y, self.decays)
 
         # Initialize solution vector
-        self.solution = np.zeros(self.dim_states)
+        self._solution = np.zeros(self.pman.dim_states)
 
         # Initialize empty state (particle density) vector
-        self.phi0 = np.zeros(self.dim_states)
-
-        # Initialize muon energy loss
-        self._init_muon_energy_loss()
+        self._phi0 = np.zeros(self.pman.dim_states)
 
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(interaction_model, force=True)
@@ -177,6 +175,12 @@ class MCEqRun(object):
     def dim(self):
         """Energy grid (dimension)"""
         return self._energy_grid.d
+
+    @property
+    def dim_states(self):
+        """Number of cascade particles times dimension of grid 
+        (dimension of the equation system)"""
+        return self.pman.dim_states
 
     def get_solution(self,
                      particle_name,
@@ -219,14 +223,14 @@ class MCEqRun(object):
         ref = self.pman.pname2pref
         sol = None
         if grid_idx is None:
-            sol = self.solution
+            sol = self._solution
         elif grid_idx >= len(self.grid_sol):
             sol = self.grid_sol[-1]
         else:
             sol = self.grid_sol[grid_idx]
 
         if particle_name.startswith('total'):
-            # Note this has changed from previous MCEq versions,
+            # Note: This has changed from previous MCEq versions,
             # since pi_ and k_ prefixes are mere tracking counters
             # and no full particle species anymore
             lep_str = particle_name.split('_')[1]
@@ -234,11 +238,13 @@ class MCEqRun(object):
                       uidx] * self._energy_grid.c**mag
 
         elif particle_name.startswith('conv'):
+            # Note: This also changed from previous MCEq versions,
+            # conventional is defined as total - prompt
             lep_str = particle_name.split('_')[1]
-            for prefix in ('pi_', 'k_'):
-                particle_name = prefix + lep_str
-                res += sol[ref[particle_name].lidx:ref[particle_name].
-                           uidx] * self._energy_grid.c**mag
+            res = sol[ref[lep_str].lidx:ref[lep_str].
+                      uidx] * self._energy_grid.c**mag
+            res -= sol[ref['pr_' + lep_str].lidx:ref['pr_' + lep_str].
+                       uidx] * self._energy_grid.c**mag
 
         else:
             res = sol[ref[particle_name].lidx:ref[particle_name].
@@ -285,6 +291,10 @@ class MCEqRun(object):
 
         self.pman.set_interaction_model(self.cs, self.y)
 
+        # Update dimensions if particle dimensions changed
+        self._phi0.resize(self.dim_states)
+        self._solution.resize(self.dim_states)
+
         # initialize matrices
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
             skip_decay_matrix=False)
@@ -313,15 +323,16 @@ class MCEqRun(object):
             self.finalize_pmodel = True
 
         # Save initial condition
-        self.phi0 *= 0
+        self._phi0 *= 0
         p_top, n_top = self.get_nucleon_spectrum(self._energy_grid.c)[1:]
-        self.phi0[self.pman[2212].lidx:self.pman[2212].uidx] = 1e-4 * p_top
+        self._phi0[self.pman[2212].lidx:self.pman[2212].uidx] = 1e-4 * p_top
 
         if 2112 in self.pman.keys() and not self.pman[2112].is_resonance:
-            self.phi0[self.pman[2112].lidx:self.pman[2112].uidx] = 1e-4 * n_top
+            self._phi0[self.pman[2112].lidx:self.pman[2112].
+                       uidx] = 1e-4 * n_top
         else:
-            self.phi0[self.pman[2212].lidx:self.pman[2212].
-                      uidx] += 1e-4 * n_top
+            self._phi0[self.pman[2212].lidx:self.pman[2212].
+                       uidx] += 1e-4 * n_top
 
     def set_single_primary_particle(self, E, corsika_id):
         """Set type and energy of a single primary nucleus to
@@ -376,15 +387,15 @@ class MCEqRun(object):
         b_neutrons = np.array(
             [n_neutrons, En * n_neutrons, En**2 * n_neutrons])
 
-        self.phi0 *= 0.
+        self._phi0 *= 0.
 
         if n_protons > 0:
             p_lidx = self.pman[2212].lidx
-            self.phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] = solve(
+            self._phi0[p_lidx + cenbin - 1:p_lidx + cenbin + 2] = solve(
                 emat, b_protons)
         if n_neutrons > 0:
             n_lidx = self.pman[2112].lidx
-            self.phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] = solve(
+            self._phi0[n_lidx + cenbin - 1:n_lidx + cenbin + 2] = solve(
                 emat, b_neutrons)
 
     def set_density_model(self, density_config):
@@ -515,29 +526,62 @@ class MCEqRun(object):
             self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
                 skip_decay_matrix=True)
 
-    def solve(self, **kwargs):
+    def solve(self, int_grid=None, grid_var='X', **kwargs):
         """Launches the solver.
 
         The setting `integrator` in the config file decides which solver
-        to launch, either the simple but accelerated explicit Euler solvers, 
-        :func:`MCEqRun._forward_euler` or, solvers from ODEPACK
-        :func:`MCEqRun._odepack`.
+        to launch.
 
         Args:
+          int_grid (list): list of depths at which results are recorded
+          grid_var (str): Can be depth `X` or something else (currently only `X` supported)
           kwargs (dict): Arguments are passed directly to the solver methods.
 
         """
-        info(
-            2, "solver={0} and sparse={1}".format(config['integrator'],
-                                                  config['use_sparse']))
+        info(2, "Launching {0} solver".format(config['integrator']))
 
-        if config['integrator'] != "odepack":
-            self._forward_euler(**kwargs)
-        elif config['integrator'] == 'odepack':
-            self._odepack(**kwargs)
+        # Calculate integration path if not yet happened
+        self._calculate_integration_path(int_grid, grid_var)
+
+        phi0 = np.copy(self._phi0)
+        nsteps, dX, rho_inv, grid_idcs = self.integration_path
+
+        info(2, 'for {0} integration steps.'.format(nsteps))
+
+        import MCEq.solvers
+
+        start = time()
+
+        if config['kernel_config'] == 'numpy':
+            kernel = MCEq.solvers.solv_numpy
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs)
+
+        elif (config['kernel_config'] == 'CUDA'):
+            kernel = MCEq.solvers.solv_CUDA_sparse
+            try:
+                self.cuda_context.set_matrices(self.int_m, self.dec_m)
+            except AttributeError:
+                from MCEq.solvers import CUDASparseContext
+                self.cuda_context = CUDASparseContext(
+                    self.int_m, self.dec_m, device_id=self.cuda_device)
+            args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs)
+
+        elif (config['kernel_config'] == 'MKL'):
+            kernel = MCEq.solvers.solv_MKL_sparse
+            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
+                    grid_idcs)
+
         else:
-            raise Exception("Unknown integrator selection '{0}'.".format(
-                config['integrator']))
+            raise Exception(
+                "Unsupported integrator settings '{0}/{1}'.".format(
+                    'sparse' if config['use_sparse'] else 'dense',
+                    config['kernel_config']))
+
+        self._solution, self.grid_sol = kernel(*args)
+
+        info(2,
+             'time elapsed during integration: {0} sec'.format(time() - start))
 
     def _init_muon_energy_loss(self):
         # Muon energy loss
@@ -552,79 +596,6 @@ class MCEqRun(object):
                 self.fl_pr) * 1e-3  # ... to GeV
 
         self.mu_loss_handler = None
-
-    def _forward_euler(self, int_grid=None, grid_var='X'):
-        """Solves the transport equations with solvers from :mod:`MCEq.time_solvers`.
-
-        Args:
-          int_grid (list): list of depths at which results are recorded
-          grid_var (str): Can be depth `X` or something else (currently only `X` supported)
-
-        """
-
-        # Calculate integration path if not yet happened
-        self._calculate_integration_path(int_grid, grid_var)
-
-        phi0 = np.copy(self.phi0)
-        nsteps, dX, rho_inv, grid_idcs = self.integration_path
-
-        info(2, 'Solver will perform {0} integration steps.'.format(nsteps))
-
-        import MCEq.time_solvers as time_solvers
-        import MCEq.energy_solvers as energy_solvers
-
-        if config["enable_muon_energy_loss"] and self.mu_loss_handler is None:
-            # TODO: Make all solvers work with just muon selector
-            if config["energy_solver"] == 'Semi-Lagrangian':
-                self.mu_loss_handler = energy_solvers.SemiLagrangian(
-                    self._e_bins, self.mu_dEdX, self.muon_selector)
-            elif config["energy_solver"] == 'Chang-Cooper':
-                self.mu_loss_handler = energy_solvers.ChangCooper(
-                    self._e_bins, self.mu_dEdX, self.muon_selector)
-            elif config["energy_solver"] == 'Direct':
-                self.mu_loss_handler = energy_solvers.DifferentialOperator(
-                    self.e_bins, self.mu_dEdX, self.pman.muon_selector)
-            else:
-                raise Exception('Unknown energy solver.')
-
-        start = time()
-
-        if (config['first_interaction_mode']
-                and config['kernel_config'] != 'numpy'):
-            raise Exception("First interaction mode only works with numpy.")
-
-        if config['kernel_config'] == 'numpy':
-            kernel = time_solvers.solv_numpy
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.mu_loss_handler, self.fa_vars)
-        elif (config['kernel_config'] == 'CUDA'
-              and config['use_sparse'] is True):
-            kernel = time_solvers.solv_CUDA_sparse
-            try:
-                self.cuda_context.set_matrices(self.int_m, self.dec_m)
-            except AttributeError:
-                from MCEq.time_solvers import CUDASparseContext
-                self.cuda_context = CUDASparseContext(
-                    self.int_m, self.dec_m, device_id=self.cuda_device)
-            args = (nsteps, dX, rho_inv, self.cuda_context, phi0, grid_idcs,
-                    self.mu_loss_handler)
-
-        elif (config['kernel_config'] == 'MKL'
-              and config['use_sparse'] is True):
-            kernel = time_solvers.solv_MKL_sparse
-            args = (nsteps, dX, rho_inv, self.int_m, self.dec_m, phi0,
-                    grid_idcs, self.mu_loss_handler)
-
-        else:
-            raise Exception(
-                "Unsupported integrator settings '{0}/{1}'.".format(
-                    'sparse' if config['use_sparse'] else 'dense',
-                    config['kernel_config']))
-
-        self.solution, self.grid_sol = kernel(*args)
-
-        info(2,
-             'time elapsed during integration: {0} sec'.format(time() - start))
 
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
@@ -652,31 +623,6 @@ class MCEqRun(object):
         step = 0
         grid_step = 0
         grid_idcs = []
-        fa_vars = {}
-        # TODO: Remove first interaction mode and replace with 2 chained runs
-        if config['first_interaction_mode']:
-            # Create variables for first interaction mode
-
-            old_err_state = np.seterr(divide='ignore')
-            # TODO: this doesn't work anymore, fix
-            fa_vars['Lambda_int'] = self.Lambda_int
-            fa_vars['lint'] = 1 / self.Lambda_int
-            np.seterr(**old_err_state)
-
-            fa_vars['ipl'] = self.pman[2212].lidx
-            fa_vars['ipu'] = self.pman[2212].uidx
-            fa_vars['inl'] = self.pman[2112].lidx
-            fa_vars['inu'] = self.pman[2112].uidx
-
-            fa_vars[
-                'pint'] = 1 / self.Lambda_int[fa_vars['ipl']:fa_vars['ipu']]
-            fa_vars[
-                'nint'] = 1 / self.Lambda_int[fa_vars['inl']:fa_vars['inu']]
-            # Where to terminate the switch vector
-            # (after all particle prod. for all species is disabled)
-            fa_vars['max_step'] = 0
-
-            fa_vars['fi_switch'] = []
 
         # The factor 0.95 means 5% inbound from stability margin of the
         # Euler intergrator.
@@ -698,22 +644,6 @@ class MCEqRun(object):
             dX_vec.append(dX)
             rho_inv_vec.append(ri(X))
 
-            if config['first_interaction_mode'] and fa_vars['max_step'] == 0:
-                # Only protons and neutrons can produce particles
-                # Disable all interactions
-                fa_vars['fi_switch'].append(
-                    np.zeros(self.dim_states, dtype='double'))
-                # Switch on particle production only for X < 1 x lambda_int
-                fa_vars['fi_switch'][-1][fa_vars['ipl']:fa_vars['ipu']][
-                    fa_vars['pint'] > X] = 1.
-                fa_vars['fi_switch'][-1][fa_vars['inl']:fa_vars['inu']][
-                    fa_vars['nint'] > X] = 1.
-                # Save step value after which no particles are produced anymore
-                if not np.sum(fa_vars['fi_switch'][-1]) > 0:
-                    fa_vars['max_step'] = step
-                # Promote fa_vars to class attribute
-                self.fa_vars = fa_vars
-
             X = X + dX
             step += 1
 
@@ -729,12 +659,11 @@ class MatrixBuilder(object):
 
     def __init__(self, particle_manager, yields, decays):
         self.pman = particle_manager
-        self.dim_states = self.pman.dim_states
-        self.dim = self.pman.dim
-        self.y = yields
-        self.decays = decays
+        self._energy_grid = self.pman._energy_grid
         self.int_m = None
         self.dec_m = None
+
+        self._construct_differential_operator()
 
     def construct_matrices(self, skip_decay_matrix=False):
         r"""Constructs the matrices for calculation.
@@ -756,7 +685,6 @@ class MatrixBuilder(object):
 
         """
 
-        # from scipy.sparse import bsr_matrix, coo_matrix
         from itertools import product
         info(
             2, "Start filling matrices. Skip_decay_matrix = {0}".format(
@@ -773,19 +701,26 @@ class MatrixBuilder(object):
         for parent, child in product(cparts, cparts):
             idx = (child.mceqidx, parent.mceqidx)
             # Main diagonal
-            if ((child.mceqidx == parent.mceqidx) and parent.can_interact
-                    and not config['first_interaction_mode']):
+            if child.mceqidx == parent.mceqidx and parent.can_interact:
                 # Substract unity from the main diagonals
                 info(10, 'substracting main C diagonal from', child.name,
                      parent.name)
                 self.C_blocks[idx][np.diag_indices(self.dim)] -= 1
 
-            if idx not in self.C_blocks:
-                continue
-            self.max_lint = np.max(
-                [self.max_lint,
-                 np.max(parent.inverse_interaction_length())])
-            self.C_blocks[idx] *= parent.inverse_interaction_length()
+            if idx in self.C_blocks:
+                # Multiply with Lambda_dec
+                # Keep track the maximal interaction length for the calculation
+                # of integration steps
+                self.max_lint = np.max([
+                    self.max_lint,
+                    np.max(parent.inverse_interaction_length())
+                ])
+                self.C_blocks[idx] *= parent.inverse_interaction_length()
+            # print child.name, parent.name, parent.has_contloss
+            if (child.mceqidx == parent.mceqidx and parent.has_contloss
+                    and config["enable_muon_energy_loss"]):
+                info(1, 'Taking continuous loss into account for', parent.name)
+                self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
 
@@ -803,7 +738,8 @@ class MatrixBuilder(object):
                 if idx not in self.D_blocks:
                     continue
                 # Multiply with Lambda_dec
-                # Track the maximal decay length for the calculation of integration steps
+                # Track the maximal decay length for the calculation of
+                # integration steps
                 self.max_ldec = max(
                     [self.max_ldec,
                      np.max(parent.inverse_decay_length())])
@@ -823,6 +759,24 @@ class MatrixBuilder(object):
         info(2, "Done filling matrices.")
 
         return self.int_m, self.dec_m
+
+    def cont_loss_operator(self, pdg_id):
+        """Returns continuous loss operator that can be summed with appropriate
+        position in the C matrix."""
+
+        return -np.diag(1 / self._energy_grid.c).dot(
+            self.op_matrix.dot(np.diag(self.pman[pdg_id].dEdX)))
+
+    @property
+    def dim(self):
+        """Energy grid (dimension)"""
+        return self.pman.dim
+
+    @property
+    def dim_states(self):
+        """Number of cascade particles times dimension of grid 
+        (dimension of the equation system)"""
+        return self.pman.dim_states
 
     def _zero_mat(self):
         """Returns a new square zero valued matrix with dimensions of grid.
@@ -855,8 +809,7 @@ class MatrixBuilder(object):
             info(10, reclev * '\t', 'following to', d.name)
             if not d.is_resonance:
                 dprop = self._zero_mat()
-                self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.hadridx,
-                                         dprop)
+                p._assign_decay_idx(d, idcs, d.hadridx, dprop)
                 propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
 
             if config["debug_level"] >= 10:
@@ -872,8 +825,7 @@ class MatrixBuilder(object):
 
             if d.is_mixed or d.is_resonance:
                 dres = self._zero_mat()
-                self.decays.assign_d_idx(p.pdg_id, idcs, d.pdg_id, d.residx,
-                                         dres)
+                p._assign_decay_idx(d, idcs, d.residx, dprop)
                 reclev += 1
                 self._follow_chains(d, dres.dot(pprod_mat), p_orig, d.residx,
                                     propmat, reclev)
@@ -922,7 +874,7 @@ class MatrixBuilder(object):
             for s in p.hadr_secondaries:
                 if s not in self.pman.cascade_particles:
                     continue
-                if 'DPMJET' in self.y.iam and s.is_lepton:
+                if 'DPMJET' in self.pman.current_hadronic_model and s.is_lepton:
                     info(1, 'DPMJET hotfix direct leptons', s)
                     continue
                 if config['adv_set']['disable_direct_leptons'] and s.is_lepton:
@@ -931,12 +883,74 @@ class MatrixBuilder(object):
 
                 if not s.is_resonance:
                     cmat = self._zero_mat()
-                    self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
-                                            s.hadridx, cmat)
+                    p._assign_hadr_dist_idx(s, p.hadridx, s.hadridx, cmat)
                     self.C_blocks[(s.mceqidx, p.mceqidx)] += cmat
 
                 cmat = self._zero_mat()
-                self.y.assign_yield_idx(p.pdg_id, p.hadridx, s.pdg_id,
-                                        s.residx, cmat)
+                p._assign_hadr_dist_idx(s, p.hadridx, s.residx, cmat)
                 self._follow_chains(
                     s, cmat, p, s.residx, self.C_blocks, reclev=1)
+
+    def _construct_differential_operator(self):
+        """Constructs a derivative operator for the contiuous losses.
+
+        This implmentation uses a 6th-order finite differences operator,
+        only depends on the energy grid. This is an operator for a sub-matrix
+        of dimension (energy grid, energy grid) for a single particle. It
+        can be likewise applied to all particle species. The dEdX values are
+        applied later in ...
+        """
+        # First rows of operator matrix (values are truncated at the edges
+        # of a matrix.)
+        diags_leftmost = [0, 1, 2, 3]
+        coeffs_leftmost = [-11, 18, -9, 2]
+        denom_leftmost = 6
+        diags_left_1 = [-1, 0, 1, 2, 3]
+        coeffs_left_1 = [-3, -10, 18, -6, 1]
+        denom_left_1 = 12
+        diags_left_2 = [-2, -1, 0, 1, 2, 3]
+        coeffs_left_2 = [3, -30, -20, 60, -15, 2]
+        denom_left_2 = 60
+
+        # Centered diagonals
+        # diags = [-3, -2, -1, 1, 2, 3]
+        # coeffs = [-1, 9, -45, 45, -9, 1]
+        # denom = 60.
+        diags = diags_left_2
+        coeffs = coeffs_left_2
+        denom = 60.
+
+        # Last rows at the right of operator matrix
+        diags_right_2 = [-d for d in diags_left_2[::-1]]
+        coeffs_right_2 = [-d for d in coeffs_left_2[::-1]]
+        denom_right_2 = denom_left_2
+        diags_right_1 = [-d for d in diags_left_1[::-1]]
+        coeffs_right_1 = [-d for d in coeffs_left_1[::-1]]
+        denom_right_1 = denom_left_1
+        diags_rightmost = [-d for d in diags_leftmost[::-1]]
+        coeffs_rightmost = [-d for d in coeffs_leftmost[::-1]]
+        denom_rightmost = denom_leftmost
+
+        info(1, 'This has to be adapted to non-uniform grid!')
+        h = np.log(self._energy_grid.b[1] / self._energy_grid.b[0])
+        dim_e = self._energy_grid.d
+        last = dim_e - 1
+
+        op_matrix = np.zeros((dim_e, dim_e))
+        op_matrix[0, np.asarray(diags_leftmost)] = np.asarray(
+            coeffs_leftmost) / (denom_leftmost * h)
+        op_matrix[1, 1 + np.asarray(diags_left_1)] = np.asarray(
+            coeffs_left_1) / (denom_left_1 * h)
+        op_matrix[2, 2 + np.asarray(diags_left_2)] = np.asarray(
+            coeffs_left_2) / (denom_left_2 * h)
+        op_matrix[last, last + np.asarray(diags_rightmost)] = np.asarray(
+            coeffs_rightmost) / (denom_rightmost * h)
+        op_matrix[last - 1, last - 1 + np.asarray(diags_right_1)] = np.asarray(
+            coeffs_right_1) / (denom_right_1 * h)
+        op_matrix[last - 2, last - 2 + np.asarray(diags_right_2)] = np.asarray(
+            coeffs_right_2) / (denom_right_2 * h)
+        for row in range(3, dim_e - 3):
+            op_matrix[row, row +
+                      np.asarray(diags)] = np.asarray(coeffs) / (denom * h)
+
+        self.op_matrix = op_matrix

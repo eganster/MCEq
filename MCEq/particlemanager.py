@@ -56,10 +56,7 @@ class MCEqParticle(object):
                  pdg_id,
                  energy_grid=None,
                  cs_db=None,
-                 init_pdata_defaults=True,
-                 is_tracking_particle=False,
-                 custom_name=None,
-                 custom_unique_pdg=None):
+                 init_pdata_defaults=True):
 
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
@@ -74,7 +71,7 @@ class MCEqParticle(object):
         #: (float) mass in GeV
         self.mass = None
         #: (str) species name in string representation
-        self.name = None if custom_name is None else custom_name
+        self.name = None
         #: Mass, charge, neutron number
         self.A, self.Z, self.N = getAZN(pdg_id)
         #: (bool) particle has both, hadron and resonance properties
@@ -87,14 +84,18 @@ class MCEqParticle(object):
         self.is_stable = False
         #: (bool) can_interact
         self.can_interact = False
+        #: (bool) has continuous losses dE/dX defined
+        self.has_contloss = False
+        #: (np.array) continuous losses in GeV/(g/cm2)
+        self.dEdX = None
         #: (bool) is a tracking particle
-        self.is_tracking = is_tracking_particle
+        self.is_tracking = False
         #: decay channels if any
         self.decay_channels = {}
         #: (int) Particle Data Group Monte Carlo particle ID
         self.pdg_id = pdg_id
         #: (int) Unique PDG ID that is different for tracking particles
-        self.unique_pdg_id = pdg_id if custom_unique_pdg is None else custom_unique_pdg
+        self.unique_pdg_id = pdg_id
         #: (int) MCEq ID
         self.mceqidx = -1
 
@@ -339,6 +340,36 @@ class MCEqParticle(object):
         m_target = config['A_target'] * 1.672621 * 1e-24  # <A> * m_proton [g]
         return self.cs / m_target
 
+    def _assign_hadr_dist_idx(self, child, projidx, chidx, cmat):
+        """Copies a subset, defined between indices ``projidx`` and ``chiidx``
+        from the ``hadr_yields`` into ``cmat``
+
+        Args:
+          child (int): PDG ID of final state child/secondary particle
+          projidx (int,int): tuple containing index range relative
+                             to the projectile's energy grid
+          dtridx (int,int): tuple containing index range relative
+                            to the child's energy grid
+          cmat (numpy.array): array reference to the interaction matrix
+        """
+        cmat[chidx[0]:chidx[1], projidx[0]:projidx[1]] = self.hadr_yields[
+            child][chidx[0]:chidx[1], projidx[0]:projidx[1]]
+
+    def _assign_decay_idx(self, child, projidx, chidx, cmat):
+        """Copies a subset, defined between indices ``projidx`` and ``chiidx``
+        from the ``hadr_yields`` into ``cmat``
+
+        Args:
+          child (int): PDG ID of final state child/secondary particle
+          projidx (int,int): tuple containing index range relative
+                             to the projectile's energy grid
+          dtridx (int,int): tuple containing index range relative
+                            to the child's energy grid
+          cmat (numpy.array): array reference to the interaction matrix
+        """
+        cmat[chidx[0]:chidx[1], projidx[0]:projidx[1]] = self.decay_dists[
+            child][chidx[0]:chidx[1], projidx[0]:projidx[1]]
+
     def get_xlab_dist(self, energy, sec_pdg, verbose=True, **kwargs):
         """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
         to `energy` for hadron-air collisions.
@@ -506,6 +537,20 @@ class MCEqParticle(object):
             self.is_mixed = True
             self.is_resonance = False
 
+    def __eq__(self, other):
+        """Checks name for equality"""
+        if isinstance(other, MCEqParticle):
+            return self.name == other.name
+        else:
+            return NotImplemented
+
+    def __neq__(self, other):
+        """Checks name for equality"""
+        if isinstance(other, MCEqParticle):
+            return self.name != other.name
+        else:
+            return NotImplemented
+
     def __repr__(self):
         a_string = ("""
         {0}:
@@ -558,28 +603,39 @@ class ParticleManager(object):
         self.tracking_relations = {}
         #: (int) Total number of species
         self.nspec = 0
-
+        # save currently applied cross section model
+        self.current_cross_sections = None
+        # save currently applied hadronic model
+        self.current_hadronic_model = None
         # Cross section database
         self._cs_db = cs_db
 
         self._init_categories(particle_pdg_list=pdg_id_list)
 
-        self._update_particle_tables()
-
         self.print_particle_tables(10)
 
     def set_cross_sections_db(self, cs_db):
-        """Let all particles know about their inelastic cross section"""
+        """Sets the inelastic cross section to each interacting particle.
+        
+        This applies to most of the hadrons and does not imply that the
+        particle becomes a projectile. Projectiles need in addition defined
+        hadronic channels.
+        """
+
         info(5, 'Setting cross section particle variables.')
+        if self.current_cross_sections == cs_db.iam:
+            info(10, 'Same cross section model not applied to particles.')
+            return
 
         for p in self.cascade_particles:
-            if p.current_cross_sections == cs_db.iam:
-                continue
             p.set_cs(cs_db)
-
+        self.current_cross_sections = cs_db.iam
         self._update_particle_tables()
 
     def set_decay_channels(self, decay_db):
+        """Attaches the references to the decay yield tables to
+        each unstable particle"""
+
         info(5, 'Setting decay info for particles.')
         for p in self.all_particles:
             p.set_decay_channels(decay_db, self)
@@ -588,14 +644,31 @@ class ParticleManager(object):
         self._update_particle_tables()
 
     def set_interaction_model(self, cs_db, hadronic_db):
+        """Attaches the references to the hadronic yield tables to
+        each projectile particle"""
+
         info(5, 'Setting hadronic secondaries for particles.')
+        if self.current_hadronic_model == hadronic_db.iam:
+            info(10, 'Same hadronic model not applied to particles.')
+            return
+
         for p in self.cascade_particles:
             if p.current_cross_sections != cs_db.iam:
                 p.set_cs(cs_db)
             if p.current_hadronic_model != hadronic_db.iam:
                 p.set_hadronic_channels(hadronic_db, self)
 
+        self.current_hadronic_model = hadronic_db.iam
         self._update_particle_tables()
+
+    def set_continuous_losses(self, contloss_db):
+        """Set continuous losses terms to particles with ionization
+        and radiation losses."""
+
+        for p in self.cascade_particles:
+            if p.pdg_id in contloss_db:
+                p.has_contloss = True
+                p.dEdX = contloss_db[p.pdg_id]
 
     def add_tracking_particle(self, parent_list, child_pdg, alias_name):
         """Allows tracking decay and particle production chains.
@@ -608,7 +681,7 @@ class ParticleManager(object):
             $ particleManagerInstance.add_tracking_particle([211], 14, 'pi_numu')
         
         This will store muon neutrinos from pion decays under the alias 'pi_numu'.
-        Multiple parents are allowed, as well::
+        Multiple parents are allowed::
 
             $ particleManagerInstance.add_tracking_particle(
                 [411, 421, 431], 14, 'D_numu')
@@ -619,28 +692,56 @@ class ParticleManager(object):
             parents (list): list of parent particle PDG ID's
             child (int): Child particle
         """
-        # Find a unique index for the tracking particle
-        unique_child_pdg = child_pdg + copysign(1000000, child_pdg)
-        while (unique_child_pdg in self.pdg2pref.keys()):
-            unique_child_pdg += copysign(10000, unique_child_pdg)
+        from copy import copy
 
-        tracking_particle = MCEqParticle(
-            child_pdg,
-            self._energy_grid,
-            self._cs_db,
-            is_tracking_particle=True,
-            custom_name=alias_name,
-            custom_unique_pdg=unique_child_pdg)
+        info(10, 'requested for', parent_list, child_pdg, alias_name)
 
+        # Check if tracking particle with the alias not yet defined
+        # and create new one of necessary
+        if alias_name in self.pname2pref:
+            info(10, 'Re-using tracking particle with same alias name',
+                 alias_name)
+            tracking_particle = self.pname2pref[alias_name]
+        else:
+            info(10, 'Creating new tracking particle')
+            # Copy all preferences of the original particle
+            tracking_particle = copy(self.pdg2pref[child_pdg])
+            tracking_particle.is_tracking = True
+            tracking_particle.name = alias_name
+            # Find a unique PDG ID for the new tracking particle
+            unique_child_pdg = child_pdg + copysign(1000000, child_pdg)
+            while (unique_child_pdg in self.pdg2pref.keys()):
+                unique_child_pdg += copysign(10000, unique_child_pdg)
+            tracking_particle.unique_pdg_id = unique_child_pdg
+
+        # Track if attempt to add the tracking particle succeeded at least once
+        track_success = False
         for parent_pdg in np.unique(parent_list + [-p for p in parent_list]):
-            self.pdg2pref[parent_pdg].track_decays(tracking_particle)
-            self.tracking_relations[parent_pdg] = tracking_particle
+            if parent_pdg not in self.pdg2pref:
+                info(10,
+                     'Parent particle {0} does not exist.'.format(parent_pdg))
+                continue
+            if (parent_pdg in self.tracking_relations and
+                    tracking_particle in self.tracking_relations[parent_pdg]):
+                info(
+                    20, 'Tracking of {0} from {1} already activated.'.format(
+                        tracking_particle.name,
+                        self.pdg2pref[parent_pdg].name))
+                continue
+            # Check if the tracking is successful. If not the particle is not
+            # a child of the parent particle
+            if self.pdg2pref[parent_pdg].track_decays(tracking_particle):
+                self.tracking_relations[parent_pdg].append(tracking_particle)
+                track_success = True
 
-        tracking_particle.mceqidx = np.max(self.mceqidx2pref.keys()) + 1
-        self.all_particles.append(tracking_particle)
-        self.cascade_particles.append(tracking_particle)
-
-        self._update_particle_tables()
+        if track_success and tracking_particle not in self.all_particles:
+            tracking_particle.mceqidx = np.max(self.mceqidx2pref.keys()) + 1
+            self.all_particles.append(tracking_particle)
+            self.cascade_particles.append(tracking_particle)
+            self._update_particle_tables()
+            info(
+                10, 'tracking particle {0} successfully added.'.format(
+                    tracking_particle.name))
 
     def track_leptons_from(self, parent_pdg_list, prefix, exclude_em=True):
         """Adds tracking particles for all leptons coming from decays of parents
@@ -648,8 +749,8 @@ class ParticleManager(object):
         """
 
         leptons = [
-            p for p in self.all_particles
-            if p.is_lepton and not (p.is_em == exclude_em) and not p.is_tracking
+            p for p in self.all_particles if p.is_lepton
+            and not (p.is_em == exclude_em) and not p.is_tracking
         ]
 
         for lepton in leptons:
@@ -670,6 +771,7 @@ class ParticleManager(object):
           (tuple of lists of :class:`data.MCEqParticle`): (all particles,
           cascade particles, resonances)
         """
+        from collections import defaultdict
         from MCEq.particlemanager import MCEqParticle
 
         info(5, "Generating particle list.")
@@ -710,7 +812,9 @@ class ParticleManager(object):
 
         self.all_particles = self.cascade_particles + self.resonances
 
-        self.tracking_relations = {}
+        self.tracking_relations = defaultdict(lambda: [])
+
+        self._update_particle_tables()
 
     def _update_particle_tables(self):
         """Update internal mapping tables after changes to the particle
@@ -736,9 +840,6 @@ class ParticleManager(object):
             if abs(p.pdg_id) == 13:
                 self.muon_selector[p.lidx:p.uidx] = True
 
-        # self._init_alias_tables()
-        # self._init_muon_energy_loss()
-
         self.print_particle_tables(10)
 
     def _restore_tracking_setup(self):
@@ -746,20 +847,24 @@ class ParticleManager(object):
         if not self.tracking_relations:
             self._init_default_tracking()
             return
-            
+
         for parent_pdg in self.tracking_relations:
-            self.pdg2pref[parent_pdg].track_decays(self.tracking_relations[parent_pdg])
+            self.pdg2pref[parent_pdg].track_decays(
+                self.tracking_relations[parent_pdg])
 
     def _init_default_tracking(self):
+        """Add default tracking particles for leptons from pi, K, and mu"""
         # Init default tracking particles
         for parent, prefix in [(211, 'pi_'), (321, 'k_'), (13, 'mu_')]:
             self.track_leptons_from([parent], prefix, exclude_em=True)
 
         # Track prompt leptons
-        self.track_leptons_from(
-            [p.pdg_id for p in self.all_particles if p.ctau < config["prompt_ctau"]],
-            'pr_',
-            exclude_em=True)
+        self.track_leptons_from([
+            p.pdg_id
+            for p in self.all_particles if p.ctau < config["prompt_ctau"]
+        ],
+                                'pr_',
+                                exclude_em=True)
 
     def __getitem__(self, pdg_id_or_name):
         """Returns reference to particle object."""
@@ -772,46 +877,9 @@ class ParticleManager(object):
         """Returns pdg_ids of all particles"""
         return [p.pdg_id for p in self.all_particles]
 
-    # def _init_alias_tables(self):
-    #     r"""Sets up the functionality of aliases and defines the meaning of
-    #     'prompt'.
-
-    #     The identification of the last mother particle of a lepton is implemented
-    #     via index aliases. I.e. the PDG index of muon neutrino 14 is transformed
-    #     into 7114 if it originates from decays of a pion, 7214 in case of kaon or
-    #     7014 if the mother particle is very short lived (prompt). The 'very short lived'
-    #     means that the critical energy :math:`\varepsilon \ge \varepsilon(D^\pm)`.
-    #     This includes all charmed hadrons, as well as resonances such as :math:`\eta`.
-
-    #     The aliases for the special ``obs_`` category are also initialized here.
-    #     """
-    #     info(5, "Initializing links to alias IDs.")
-
-    #     self.alias_table = {}
-    #     prompt_ids = []
-    #     for p in self.all_particles:
-    #         if p.is_lepton or p.is_alias or p.pdg_id < 0:
-    #             continue
-    #         if 411 in self.pdg2pref and p.E_crit >= self.pdg2pref[411].E_crit:
-    #             prompt_ids.append(p.pdg_id)
-    #     for lep_id in [12, 13, 14, 16]:
-    #         self.alias_table[(211, lep_id)] = 7100 + lep_id  # pions
-    #         self.alias_table[(321, lep_id)] = 7200 + lep_id  # kaons
-    #         for pr_id in prompt_ids:
-    #             self.alias_table[(pr_id, lep_id)] = 7000 + lep_id  # prompt
-
-    # # check if leptons coming from mesons located in obs_ids should be
-    # # in addition scored in a separate category (73xx)
-    # self.obs_table = {}
-    # if self.obs_ids is not None:
-    #     for obs_id in self.obs_ids:
-    #         if obs_id in self.pdg2pref.keys():
-    #             self.obs_table.update({
-    #                 (obs_id, 12): 7312,
-    #                 (obs_id, 13): 7313,
-    #                 (obs_id, 14): 7314,
-    #                 (obs_id, 16): 7316
-    #             })
+    def __contains__(self, key):
+        """Defines the `in` operator to look for particles"""
+        return key in self.all_particles
 
     def __repr__(self):
         str_out = ""

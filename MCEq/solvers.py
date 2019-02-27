@@ -46,15 +46,8 @@ import numpy as np
 from mceq_config import config, dbg
 from MCEq.misc import info
 
-def solv_numpy(nsteps,
-               dX,
-               rho_inv,
-               int_m,
-               dec_m,
-               phi,
-               grid_idcs,
-               mu_loss_handler,
-               fa_vars=None):
+
+def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     """:mod;`numpy` implementation of forward-euler integration.
 
     Args:
@@ -64,8 +57,6 @@ def solv_numpy(nsteps,
       int_m (numpy.array): interaction matrix :eq:`int_matrix` in dense or sparse representation
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
-      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
-      fa_vars (dict,optional): contains variables for first interaction mode
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
@@ -79,10 +70,6 @@ def solv_numpy(nsteps,
     ric = rho_inv
     phc = phi
 
-    enmuloss = config['enable_muon_energy_loss']
-    muloss_min_step = config['muon_energy_loss_min_step']
-    # Accumulate at least a few g/cm2 for energy loss steps
-    # to avoid numerical errors
     dXaccum = 0.
 
     if config['FP_precision'] == 32:
@@ -94,41 +81,19 @@ def solv_numpy(nsteps,
 
     from time import time
     start = time()
-    stepper = None
-
-    # Implmentation of first interaction mode
-    if config['first_interaction_mode']:
-
-        def stepper(step):
-            if step <= fa_vars['max_step']:
-                return (-fa_vars['Lambda_int'] * phc + imc.dot(
-                    fa_vars['fi_switch'][step] * phc) + dmc.dot(
-                        ric[step] * phc)) * dxc[step]
-            else:
-                # Equivalent of setting interaction matrix to 0
-                return (
-                    -fa_vars['Lambda_int'] * phc + dmc.dot(ric[step] * phc)
-                ) * dxc[step]
-    else:
-
-        def stepper(step):
-            return (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
 
     for step in xrange(nsteps):
-        phc += stepper(step)
+        phc += (imc.dot(phc) + dmc.dot(ric[step] * phc)) * dxc[step]
 
         dXaccum += dxc[step]
 
-        if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
-            mu_loss_handler.solve_step(phc, dXaccum)
-            dXaccum = 0.
-
-        if (grid_idcs and grid_step < len(grid_idcs) and
-                grid_idcs[grid_step] == step):
+        if (grid_idcs and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(phc))
             grid_step += 1
 
-    info(2, "Performance: {0:6.2f}ms/iteration".format(
+    info(
+        2, "Performance: {0:6.2f}ms/iteration".format(
             1e3 * (time() - start) / float(nsteps)))
 
     return phc, grid_sol
@@ -220,13 +185,7 @@ class CUDASparseContext(object):
             alpha=self.fl_pr(dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
 
 
-def solv_CUDA_sparse(nsteps,
-                     dX,
-                     rho_inv,
-                     context,
-                     phi,
-                     grid_idcs,
-                     mu_loss_handler):
+def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
     """`NVIDIA CUDA cuSPARSE <https://developer.nvidia.com/cusparse>`_ implementation
     of forward-euler integration.
 
@@ -247,13 +206,6 @@ def solv_CUDA_sparse(nsteps,
     c = context
     c.set_phi(phi)
 
-    enmuloss = config['enable_muon_energy_loss']
-    muloss_min_step = config['muon_energy_loss_min_step']
-
-    # Accumulate at least a few g/cm2 for energy loss steps
-    # to avoid numerical errors
-    dXaccum = 0.
-
     grid_step = 0
     grid_sol = []
 
@@ -263,35 +215,20 @@ def solv_CUDA_sparse(nsteps,
     for step in xrange(nsteps):
         c.solve_step(rho_inv[step], dX[step])
 
-        dXaccum += dX[step]
-
-        if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
-            # Download current solution vector to host
-            phc = c.get_phi()
-            mu_loss_handler.solve_step(phc, dXaccum)
-            # Upload changed vector back..
-            c.set_phi(phc)
-            dXaccum = 0.
-
-        if (grid_idcs and grid_step < len(grid_idcs) and
-                grid_idcs[grid_step] == step):
+        if (grid_idcs and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step):
             grid_sol.append(c.get_phi())
             grid_step += 1
 
-    info(2, "Performance: {0:6.2f}ms/iteration".format(
+    info(
+        2, "Performance: {0:6.2f}ms/iteration".format(
             1e3 * (time() - start) / float(nsteps)))
 
     return c.get_phi(), grid_sol
 
 
-def solv_MKL_sparse(nsteps,
-                    dX,
-                    rho_inv,
-                    int_m,
-                    dec_m,
-                    phi,
-                    grid_idcs,
-                    mu_loss_handler):
+def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
+    # mu_loss_handler):
     """`Intel MKL sparse BLAS
     <https://software.intel.com/en-us/articles/intel-mkl-sparse-blas-overview?language=en>`_
     implementation of forward-euler integration.
@@ -307,7 +244,7 @@ def solv_MKL_sparse(nsteps,
       dec_m (numpy.array): decay  matrix :eq:`dec_matrix` in dense or sparse representation
       phi (numpy.array): initial state vector :math:`\\Phi(X_0)`
       grid_idcs (list): indices at which longitudinal solutions have to be saved.
-      mu_loss_handler (object): object of type :class:`SemiLagrangianEnergyLosses`
+
     Returns:
       numpy.array: state vector :math:`\\Phi(X_{nsteps})` after integration
     """
@@ -369,11 +306,11 @@ def solv_MKL_sparse(nsteps,
     cdone = fl_pr(1.)
     cione = c_int(1)
 
-    enmuloss = config['enable_muon_energy_loss']
-    muloss_min_step = config['muon_energy_loss_min_step']
-    # Accumulate at least a few g/cm2 for energy loss steps
-    # to avoid numerical errors
-    dXaccum = 0.
+    # enmuloss = config['enable_muon_energy_loss']
+    # muloss_min_step = config['muon_energy_loss_min_step']
+    # # Accumulate at least a few g/cm2 for energy loss steps
+    # # to avoid numerical errors
+    # dXaccum = 0.
 
     grid_step = 0
     grid_sol = []
@@ -384,38 +321,28 @@ def solv_MKL_sparse(nsteps,
     for step in xrange(nsteps):
         # delta_phi = int_m.dot(phi)
         gemv(
-            byref(trans),
-            byref(m),
-            byref(m),
-            byref(cdone), matdsc, int_m_data, int_m_ci, int_m_pb, int_m_pe,
-            phi, byref(cdzero), delta_phi)
+            byref(trans), byref(m), byref(m), byref(cdone), matdsc, int_m_data,
+            int_m_ci, int_m_pb, int_m_pe, phi, byref(cdzero), delta_phi)
         # delta_phi = rho_inv * dec_m.dot(phi) + delta_phi
         gemv(
-            byref(trans),
-            byref(m),
-            byref(m),
-            byref(fl_pr(rho_inv[step])), matdsc, dec_m_data, dec_m_ci,
-            dec_m_pb, dec_m_pe, phi, byref(cdone), delta_phi)
+            byref(trans), byref(m), byref(m), byref(fl_pr(rho_inv[step])),
+            matdsc, dec_m_data, dec_m_ci, dec_m_pb, dec_m_pe, phi,
+            byref(cdone), delta_phi)
         # phi = delta_phi * dX + phi
         axpy(m, fl_pr(dX[step]), delta_phi, cione, phi, cione)
 
-        dXaccum += dX[step]
-
-        if enmuloss and (dXaccum > muloss_min_step or step == nsteps - 1):
-            mu_loss_handler.solve_step(npphi, dXaccum)
-            dXaccum = 0.
-
-        if (grid_idcs and grid_step < len(grid_idcs) and
-                grid_idcs[grid_step] == step):
+        if (grid_idcs and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step):
             grid_sol.append(np.copy(npphi))
             grid_step += 1
 
-    info(2, "Performance: {0:6.2f}ms/iteration".format(
+    info(
+        2, "Performance: {0:6.2f}ms/iteration".format(
             1e3 * (time() - start) / float(nsteps)))
 
     return npphi, grid_sol
 
-# TODO: Debug this and transition to BDF
+    # TODO: Debug this and transition to BDF
     def _odepack(dXstep=.1,
                  initial_depth=0.0,
                  int_grid=None,
