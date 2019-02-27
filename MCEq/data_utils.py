@@ -13,9 +13,10 @@ for MCEq.
 """
 
 import numpy as np
-from mceq_config import config, dbg, standard_particles
+from mceq_config import config, standard_particles
 import MCEq.data
-from MCEq.misc import is_charm_pdgid
+from MCEq.particlemanager import _pdata
+from MCEq.misc import is_charm_pdgid, info
 
 
 def clean_data_directory():
@@ -90,21 +91,18 @@ def convert_to_compact(fname):
     import os
     import cPickle as pickle
     from bz2 import BZ2File
-    import ParticleDataTool
 
     dpm_di = None
     if fname.endswith('_ledpm.bz2'):
 
-        if dbg > 0:
-            print "convert_to_compact(): Low energy extension requested", fname
+        info(1,"Low energy extension requested", fname)
 
         dpmpath = os.path.join(
             config['data_dir'],
             config['low_energy_extension']['le_model'].translate(
                 None, "-.").upper() + '_yields_compact.bz2')
 
-        if dbg > 2:
-            print "convert_to_compact(): looking for file", dpmpath
+        info(2,"convert_to_compact(): looking for file", dpmpath)
 
         if not os.path.isfile(dpmpath):
             convert_to_compact(dpmpath)
@@ -122,8 +120,7 @@ def convert_to_compact(fname):
     if not os.path.isfile(fn_he):
         fn_he = os.path.join(config["data_dir"], fn_he)
 
-    if dbg > 0:
-        print "convert_to_compact(): Attempting conversion of", fn_he
+    info(1, "Attempting conversion of", fn_he)
 
     # Load the yield dictionary (without multiplication with bin widths)
     mdi = pickle.load(BZ2File(fn_he))
@@ -143,8 +140,7 @@ def convert_to_compact(fname):
     # projectiles
     allowed_projectiles = [2212, 2112, 211, 321, 130, 3122]
 
-    import ParticleDataTool as pd
-    part_d = pd.PYTHIAParticleData()
+    part_d = _pdata
     ctau_pr = part_d.ctau(310)
 
     # Create new dictionary for the compact model version
@@ -153,33 +149,27 @@ def convert_to_compact(fname):
     def create_secondary_dict(yield_dict):
         """This is a replica of function
         :func:`MCEq.data.InteractionYields._gen_index`."""
-        dbgstr = 'convert_to_compact::create_secondary_dict(): '
-        if dbg > 2:
-            print dbgstr + 'entering...'
+        info(10, 'entering...')
 
         secondary_dict = {}
         for key, mat in sorted(yield_dict.iteritems()):
             try:
                 proj, sec = key
             except ValueError:
-                if dbg > 3:
-                    print(dbgstr + 'Skip additional info', key)
+                info(10, 'Skip additional info', key)
                 continue
 
             if proj not in secondary_dict:
                 secondary_dict[proj] = []
-                if dbg > 3:
-                    print dbgstr, proj, 'added.'
+                info(10, proj, 'added.')
 
             if np.sum(mat) > 0:
                 assert (sec not in secondary_dict[proj]), (
-                    dbgstr +
                     "Error in construction of index array: {0} -> {1}".format(
                         proj, sec))
                 secondary_dict[proj].append(sec)
             else:
-                if dbg > 3:
-                    print dbgstr + 'Zeros for', proj, sec
+                info(10, 'Zeros for', proj, sec)
 
         return secondary_dict
 
@@ -194,22 +184,17 @@ def convert_to_compact(fname):
             \mathbf{C}^M^p = D^\rho \cdot \ 
         :func:`MCEq.data.InteractionYields._gen_index`."""
 
-        dbgstr = 'convert_to_compact::follow_chained_decay(): '
         tab = 3 * reclev * '--' + '> '
 
-        if dbg > 5 and reclev == 0:
-            print dbgstr, 'start recursion with', real_mother, interm_mothers, np.sum(
-                mat)
-        elif dbg > 10:
-            print tab, 'enter with', real_mother, interm_mothers, np.sum(mat)
+        info(10, 'start recursion with', real_mother, interm_mothers, np.sum(
+                mat),  condition=reclev == 0)
+        info(30, 'enter with', real_mother, interm_mothers, np.sum(mat))
 
         if np.sum(mat) < 1e-30:
-            if dbg > 10:
-                print tab, 'zero matrix for', real_mother, interm_mothers
+            info(30, 'zero matrix for', real_mother, interm_mothers,condition=np.sum(mat) < 1e-30)
         if interm_mothers[-1] not in dec_di or interm_mothers[
                 -1] in standard_particles:
-            if dbg > 10:
-                print tab, 'no further decays of', interm_mothers
+            info(30, tab, 'no further decays of', interm_mothers)
             return
 
         for d in dec_di[interm_mothers[-1]]:
@@ -219,15 +204,13 @@ def convert_to_compact(fname):
             mprod = dmat.dot(mat)
 
             if np.sum(mprod) < 1e-40:
-                if dbg > 10:
-                    print tab, 'cancel recursion in', real_mother, interm_mothers, d, \
-                    'since matrix is zero', np.sum(mat), np.sum(dmat), np.sum(mprod)
+                info(30, tab, 'cancel recursion in', real_mother, interm_mothers, d, \
+                    'since matrix is zero', np.sum(mat), np.sum(dmat), np.sum(mprod))
                 continue
 
             if d not in standard_particles:
-                if dbg > 5:
-                    print tab, 'Recurse', real_mother, interm_mothers, d, np.sum(
-                        mat)
+                info(30, tab, 'Recurse', real_mother, interm_mothers, d, np.sum(
+                        mat))
 
                 follow_chained_decay(real_mother, mprod, interm_mothers + [d],
                                      reclev + 1)
@@ -243,16 +226,13 @@ def convert_to_compact(fname):
                     if is_prompt:
                         d = np.sign(d) * (7000 + abs(d))
 
-                if dbg > 5:
-                    print tab, 'contribute to', real_mother, interm_mothers, d
+                info(10, tab, 'contribute to', real_mother, interm_mothers, d)
 
                 if (real_mother, d) in compact_di.keys():
-                    if dbg > 10:
-                        print tab, '+=', (real_mother, d), np.sum(mprod)
+                    info(10, tab, '+=', (real_mother, d), np.sum(mprod))
                     compact_di[(real_mother, d)] += mprod
                 else:
-                    if dbg > 10:
-                        print tab, 'new', (real_mother, d), interm_mothers
+                    info(10, tab, 'new', (real_mother, d), interm_mothers)
                     compact_di[(real_mother, d)] = mprod
 
         return
@@ -261,9 +241,8 @@ def convert_to_compact(fname):
     pprod_di = create_secondary_dict(mdi)
     dec_di = create_secondary_dict(ddi)
 
-    if dbg > 5:
-        print 'Int   dict:\n', sorted(pprod_di)
-        print 'Decay dict:\n', sorted(dec_di)
+    info(10, 'Int   dict:\n', sorted(pprod_di))
+    info(10, 'Decay dict:\n', sorted(dec_di))
 
     for proj, lsecs in sorted(pprod_di.iteritems()):
 
@@ -273,13 +252,13 @@ def convert_to_compact(fname):
         for sec in lsecs:
             if (config['adv_set']['disable_dpmjet_charm'] and 'DPMJET' in fname
                     and is_charm_pdgid(sec)):
-                if dbg > 2: print 'Skip charm secodaries for DPMJET'
+                info(5, 'Skip charm secodaries for DPMJET')
                 continue
             # Copy all direct production in first iteration
             if sec in standard_particles:
                 compact_di[(proj, sec)] = np.copy(mdi[(proj, sec)])
 
-                if dbg > 2: print 'copied', proj, '->', sec
+                info(5, 'copied', proj, '->', sec)
 
         for sec in lsecs:
             #Iterate over all remaining secondaries
@@ -287,10 +266,10 @@ def convert_to_compact(fname):
                 continue
             if (config['adv_set']['disable_dpmjet_charm'] and 'DPMJET' in fname
                     and is_charm_pdgid(sec)):
-                if dbg > 2: print 'Skip charm secodaries for DPMJET'
+                info(5, 'Skip charm secodaries for DPMJET')
                 continue
 
-            if dbg > 3: proj, '->', sec, '->', dec_di[sec]
+            info(10, proj, '->', sec, '->', dec_di[sec])
             #Enter recursion and calculate contribution from decay
             follow_chained_decay(proj, mdi[(proj, sec)], [sec], 0)
 
@@ -339,8 +318,7 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
             "should be specified, but not both.")
 
     if fname:
-        if dbg > 0:
-            print "extend_to_low_energies(): Low energy extension requested:", fname
+        info(5, "Low energy extension requested:", fname)
 
         # Load the yield dictionary (without multiplication with bin widths ".bz2")
         he_di = pickle.load(
@@ -361,9 +339,8 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
 
     # Find the index of transition in the energy grid
     transition_idx = np.count_nonzero(egr < he_le_trasition)
-    if dbg > 1:
-        print "extend_to_low_energies(): transition_idx={0}, transition_energy={1}".format(
-            transition_idx, egr[transition_idx])
+    info(5, "transition_idx={0}, transition_energy={1}".format(
+            transition_idx, egr[transition_idx]))
 
     # Indices of the transition region (+2 because 0 and 1 are included)
     intp_indices = np.arange(
@@ -375,9 +352,7 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
     intp_array = np.ones((len(egr), len(intp_scales)))
     he_int_array = intp_scales * intp_array
     le_int_array = intp_scales[::-1] * intp_array
-    if dbg > 2:
-        print "extend_to_low_energies(): int. arrays", intp_scales, \
-            intp_indices, egr[intp_indices]
+    info(5, "int. arrays", intp_scales, intp_indices, egr[intp_indices])
 
     ext_di = {}
 
@@ -394,13 +369,11 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
             # Use only he model cross sections if le model doesn't
             # know the process
             if config["low_energy_extension"]["use_unknown_cs"]:
-                if dbg > 3:
-                    print "extend_to_low_energies(): skipping particle", k
+                info(5, "skipping particle", k)
                 ext_di[k] = new_mat
                 continue
             else:
-                raise Exception('extend_to_low_energies(): High energy model' +
-                                ' contains ')
+                raise Exception('High energy model contains unknown cs.')
         else:
             le_mat = np.copy(le_di[k])
             try:
@@ -410,10 +383,10 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
                 le_mat[:, intp_indices] *= le_int_array
 
             except IndexError:
-                print "extend_to_low_energies(): problems indexing model transition"
-                print k, intp_indices,
-                print he_mat
-                print le_mat
+                info(0, "problems indexing model transition")
+                info(0,  k, intp_indices)
+                info(0,  he_mat)
+                info(0,  le_mat)
 
             new_mat += le_mat
 
@@ -422,8 +395,7 @@ def extend_to_low_energies(he_di=None, le_di=None, fname=None):
     ext_di['le_ext'] = config["low_energy_extension"]
 
     if fname:
-        if dbg > 0:
-            print "extend_to_low_energies(): Saving", fname
+        info(5, "Saving", fname)
         pickle.dump(ext_di, BZ2File(fname, 'wb'), protocol=-1)
 
     return ext_di

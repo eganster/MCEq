@@ -12,7 +12,7 @@ Some helper functions and plotting features are collected in this module.
 from __future__ import print_function
 from collections import namedtuple
 import numpy as np
-from mceq_config import config, dbg
+from mceq_config import config
 
 #: Energy grid (centers, bind widths, dimension)
 energy_grid = namedtuple("energy_grid",("c", "b", "w", "d"))

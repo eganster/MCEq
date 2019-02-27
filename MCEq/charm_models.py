@@ -16,7 +16,7 @@ when overwriting a model yield file in
 """
 
 import numpy as np
-from mceq_config import dbg
+from mceq_config import config
 from MCEq.misc import info
 from abc import ABCMeta, abstractmethod
 

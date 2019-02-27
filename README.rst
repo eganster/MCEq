@@ -1,4 +1,4 @@
-MCEq - Matrix cascade equation (Release Candidate 1)
+MCEq - Matrix cascade equation (public pre-release)
 ====================================================
 
 This version was previously known as 'dev' branch.

@@ -15,7 +15,7 @@ validating data structures:
 """
 
 import numpy as np
-from mceq_config import config, dbg
+from mceq_config import config
 from misc import normalize_hadronic_model_name, is_charm_pdgid, info
 
 class InteractionYields(object):
@@ -551,10 +551,9 @@ class InteractionYields(object):
             info(2, 'reset selection of x_lab band')
             return
 
-        if dbg > 0:
-            xl_bins = self.e_bins / self.e_bins[-1]
-            info(2, 'limiting Feynman x range to: {0:5.2e} - {1:5.2e}'.format(
-                          xl_bins[self.band[0]], xl_bins[self.band[1]]))
+        info(2, 'limiting Feynman x range to: {0:5.2e} - {1:5.2e}'.format(
+                          (self.e_bins / self.e_bins[-1])[self.band[0]], 
+                          (self.e_bins / self.e_bins[-1])[self.band[1]]))
 
     def is_yield(self, projectile, daughter):
         """Checks if a non-zero yield matrix exist for ``projectile``-
@@ -1120,7 +1119,7 @@ class HadAirCrossSections(object):
         interaction_model = normalize_hadronic_model_name(interaction_model)
         interaction_model = interaction_model.split('_compact')[0]
 
-        if interaction_model == self.iam and dbg > 0:
+        if interaction_model == self.iam:
             info(5, 'Model {0} already initialized.'.format(self.iam))
             return
         if interaction_model in self.cs_dict.keys():

@@ -783,7 +783,8 @@ class ParticleManager(object):
             modtab = SibyllParticleTable()
             particles = modtab.baryons + modtab.mesons + modtab.leptons
 
-        # TODO: hotfix to remove the special categories
+        # TODO: Remove this after new grid/tables have been generated without the
+        # special categories
         particles = [p for p in particles if abs(p) < 7000]
 
         # Remove duplicates
@@ -793,6 +794,8 @@ class ParticleManager(object):
         particle_list = [
             MCEqParticle(p, self._energy_grid, self._cs_db) for p in particles
         ]
+
+        
 
         # Sort by critical energy (= int_len ~== dec_length ~ int_cs/tau)
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)
@@ -823,7 +826,6 @@ class ParticleManager(object):
         self.n_cparticles = len(self.cascade_particles)
         self.dim = self._energy_grid.d
         self.dim_states = self._energy_grid.d * self.n_cparticles
-        self.muon_selector = np.zeros(self.dim_states, dtype='bool')
 
         for p in self.all_particles:
             self.pdg2mceqidx[p.unique_pdg_id] = p.mceqidx
@@ -833,12 +835,6 @@ class ParticleManager(object):
             self.mceqidx2pref[p.mceqidx] = p
             self.pdg2pref[p.unique_pdg_id] = p
             self.pname2pref[p.name] = p
-
-            # TODO: This thing has to change to something like
-            # "partiles with continuous losses"
-            # Select all positions of muon species in the state vector
-            if abs(p.pdg_id) == 13:
-                self.muon_selector[p.lidx:p.uidx] = True
 
         self.print_particle_tables(10)
 

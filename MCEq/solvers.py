@@ -43,7 +43,7 @@ The functions use different libraries for sparse and dense linear algebra (BLAS)
 
 """
 import numpy as np
-from mceq_config import config, dbg
+from mceq_config import config
 from MCEq.misc import info
 
 

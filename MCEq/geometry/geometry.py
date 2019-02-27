@@ -9,7 +9,7 @@ the geometry of the cascade trajectory.
 import sys
 import numpy as np
 from MCEq.misc import theta_rad
-from mceq_config import config, dbg
+from mceq_config import config
 
 sys.path.append('..')
 

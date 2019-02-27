@@ -587,10 +587,8 @@ class MCEqRun(object):
         # Muon energy loss
         import cPickle as pickle
         from os.path import join
-        if config['energy_solver'] != 'Semi-Lagrangian':
-            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
-        else:
-            eloss_fname = str(config['mu_eloss_fname'][:-4] + '_edges.ppl')
+        
+        eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
         self.mu_dEdX = pickle.load(
             open(join(config['data_dir'], eloss_fname), 'rb')).astype(
                 self.fl_pr) * 1e-3  # ... to GeV
@@ -719,7 +717,7 @@ class MatrixBuilder(object):
             # print child.name, parent.name, parent.has_contloss
             if (child.mceqidx == parent.mceqidx and parent.has_contloss
                     and config["enable_muon_energy_loss"]):
-                info(1, 'Taking continuous loss into account for', parent.name)
+                info(5, 'Taking continuous loss into account for', parent.name)
                 self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
@@ -752,8 +750,7 @@ class MatrixBuilder(object):
             info(5, "{0} Matrix info:".format(mname))
             info(5, "    density    : {0:3.2%}".format(mat_density))
             info(5, "    shape      : {0} x {1}".format(*mat.shape))
-            if config['use_sparse']:
-                info(5, "    nnz        : {0}".format(mat.nnz))
+            info(5, "    nnz        : {0}".format(mat.nnz))
             info(10, "    sum        :", mat.sum())
 
         info(2, "Done filling matrices.")

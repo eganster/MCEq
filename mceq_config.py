@@ -54,23 +54,10 @@ config = {
     # Atmosphere and geometry settings
     #=========================================================================
 
-    # Use file for caching calculated atmospheric rho(X) splines
-    # This feature is kind of obsolete, since change of the integrator reduced
-    # the profile computation to ~30ms. If this is a constraint for you, contact
-    # me.
-    "use_atm_cache": False,
-
     # Atmospheric model in the format: (model, (arguments))
     "density_model": ('CORSIKA', ('BK_USStd', None)),
     # "density_model": ('MSIS00_IC',('SouthPole','January')),
     # "density_model": ('GeneralizedTarget', None),
-
-    # Version of NRLMSISE-00 python library (ctypes, native)
-    "msis_python": "ctypes",
-
-    # List of particles which decay products will be scored
-    # in the 'obs_' category
-    "obs_ids": None,  # Example ["eta", "eta*", "etaC", "omega", "phi"],
 
     # Definition of prompt: default ctau < 0.123 cm (that of D0)
     "prompt_ctau": 0.123,
@@ -104,9 +91,6 @@ config = {
     # euler kernel implementation (numpy/MKL/CUDA).
     # With serious nVidia GPUs CUDA a few times faster than MKL
     "kernel_config": "MKL",
-
-    # Use sparse linear algebra (recommended!)
-    "use_sparse": True,
 
     #Number of MKL threads (for sparse matrix multiplication the performance
     #advantage from using more than 1 thread is limited by memory bandwidth)
@@ -158,16 +142,6 @@ config = {
 
     # Muon energy loss according to Kokoulin et al.
     "enable_muon_energy_loss": True,
-
-    # Energy solver, options are "Semi-Lagrangian", "Direct" and "Chang-Cooper"
-    "energy_solver" : "Direct",
-
-    # Minimal step size for muon energy loss steps in g/cm2
-    "muon_energy_loss_min_step": 5.,
-
-    # First interaction mode
-    # (stop particle production after one interaction length)
-    "first_interaction_mode": False,
 
     # When using modified particle production matrices use
     # isospin symmetries to determine the corresponding
@@ -244,8 +218,6 @@ config = {
         "no_mixing": False
     }
 }
-
-dbg = config['debug_level']
 
 # Particles for compact mode
 standard_particles = [

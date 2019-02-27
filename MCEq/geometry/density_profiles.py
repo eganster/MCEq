@@ -35,50 +35,9 @@ from abc import ABCMeta, abstractmethod
 from os.path import join
 import numpy as np
 from MCEq.misc import theta_deg, theta_rad, info
-from numba import jit, double  # @UnresolvedImport
+from numba import jit, double
 
-from mceq_config import dbg, config
-
-
-def _load_cache():
-    """Loads atmosphere cache from file.
-
-    If file does not exist, function returns
-    a new empty dictionary.
-
-    Returns:
-        dict: Dictionary containing splines.
-
-    """
-    import cPickle as pickle
-    info(2, 'loading cache.')
-    fname = join(config['data_dir'],
-                 config['atm_cache_file'])
-
-    try:
-        return pickle.load(open(fname, 'rb'))
-    except IOError:
-        info(2, 'creating new cache..')
-        return {}
-
-
-def _dump_cache(cache):
-    """Stores atmosphere cache to file.
-
-    Args:
-        (dict) current cache
-    Raises:
-        IOError:
-    """
-    import cPickle as pickle
-
-    info(2, 'dumping cache.')
-    fname = join(config['data_dir'],
-                 config['atm_cache_file'])
-    try:
-        pickle.dump(cache, open(fname, 'wb'), protocol=-1)
-    except IOError:
-        raise IOError('could not (re-)create cache. Wrong working directory?')
+from mceq_config import config
 
 class EarthsAtmosphere():
     """Abstract class containing common methods on atmosphere.
@@ -150,21 +109,10 @@ class EarthsAtmosphere():
         dl_vec = np.linspace(0, path_length, n_steps)
 
         now = time()
-        # TODO: Remove the caching functionality and all this stuff related
-        # to quad integration. Cumptrapz is so fast, that caching is nonsense.
-        # One possible thing is to substitute the integral to use some log
-        # features of the integrand and reduce further the number of steps
 
         # Calculate integral for each depth point
         X_int = cumtrapz(vec_rho_l(dl_vec), dl_vec)#
         dl_vec = dl_vec[1:]
-        # X_int = np.zeros_like(dl_vec, dtype='float64')
-        # X_int[0] = 0.
-        # for i in range(1, len(dl_vec)):
-
-        #     X_int[i] = X_int[i - 1] + quad(vec_rho_l,
-        #                                    dl_vec[i - 1], dl_vec[i],
-        #                                    epsrel=0.01)[0]
 
         info(5, '.. took {0:1.2f}s'.format(time() - now))
 
@@ -200,46 +148,11 @@ class EarthsAtmosphere():
                                     spline for each call
         """
         if theta_deg < 0. or theta_deg > self.max_theta:
-            raise Exception(self.__class__.__name__ + 
-                '(): Zenith angle not in allowed range.')
+            raise Exception('Zenith angle not in allowed range.')
 
-        def calculate_and_store(key, cache):
-            self.thrad = theta_rad(theta_deg)
-            self.theta_deg = theta_deg
-            self.calculate_density_spline()
-            cache[key][theta_deg] = (self.max_X, self.s_h2X,
-                self.s_X2rho, self.s_lX2h)
-            _dump_cache(cache)
-
-        if self.theta_deg == theta_deg and not force_spline_calc:
-            info(5,'Using previous density spline.')
-            return
-
-        elif config['use_atm_cache'] and not force_spline_calc:
-            from MCEq.misc import _get_closest
-            cache = _load_cache()
-            key = (self.__class__.__name__, self.location, self.season)
-            if cache and key in cache.keys():
-                try:
-                    closest = _get_closest(theta_deg, cache[key].keys())[1]
-                    if abs(closest - theta_deg) < 1.:
-                        self.thrad = theta_rad(closest)
-                        self.theta_deg = closest
-                        self.max_X, self.s_h2X, self.s_X2rho, self.s_lX2h = cache[key][closest]
-                    else:
-                        calculate_and_store(key, cache)
-                except:
-                    cache[key] = {}
-                    calculate_and_store(key, cache)
-
-            else:
-                cache[key] = {}
-                calculate_and_store(key, cache)
-
-        else:
-            self.thrad = theta_rad(theta_deg)
-            self.theta_deg = theta_deg
-            self.calculate_density_spline()
+        self.thrad = theta_rad(theta_deg)
+        self.theta_deg = theta_deg
+        self.calculate_density_spline()
 
     def r_X2rho(self, X):
         """Returns the inverse density :math:`\\frac{1}{\\rho}(X)`.
@@ -548,7 +461,7 @@ class CorsikaAtmosphere(EarthsAtmosphere):
                                                  112.8e5, epsrel=1e-4)[0]))
         info(5, '_thickl = np.array([' + ', '.join(thickl) + '])')
 
-
+# TODO: Remove numba dependence
 @jit(double(double, double, double[:, :]), target='cpu')
 def planar_rho_inv_jit(X, cos_theta, param):
     """Optimized calculation of :math:`1/\\rho(X,\\theta)` in
@@ -714,9 +627,9 @@ class MSIS00Atmosphere(EarthsAtmosphere):
     """
 
     def __init__(self, location, season):
-        from MCEq.msis_wrapper import cNRLMSISE00, pyNRLMSISE00
+        from MCEq.msis_wrapper import cNRLMSISE00
 
-        self._msis = (cNRLMSISE00() if config['msis_python'] == 'ctypes' else pyNRLMSISE00())
+        self._msis = cNRLMSISE00()
 
         self.init_parameters(location, season)
 

@@ -196,21 +196,6 @@ def get_decay_matrix_bin_average(mo, da, x_lower, x_upper):
         elif mo in [8, 9, 10] and da in [13]:
             result = muonplus_to_numubar(x_grid, -1 * hel)
 
-    # neutrinos from beta decays
-    # TODO: The following beta decay to neutrino distr need to be averaged analyticaly
-    # TODO: Also the angular averaging is done numerically still
-    # beta-
-    elif mo > 99 and da == 11:
-        info(10, 'nu_e from beta+ decay', mo, mo - 1, da)
-        result = nu_from_beta_decay(x_grid, mo, mo - 1)
-    # beta+
-    elif mo > 99 and da == 12:
-        info(10, 'nubar_e from beta- decay', mo, mo + 1, da)
-        result = nu_from_beta_decay(x_grid, mo, mo + 1)
-    # neutron
-    elif mo > 99 and 99 < da < 200:
-        info(10, 'beta decay boost conservation', mo, da)
-        result = boost_conservation_avg(x_lower, x_upper)
     else:
         info(
             5,
