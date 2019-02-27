@@ -1,6 +1,3 @@
 [submodule "CRFluxModels"]
 	path = CRFluxModels
 	url = https://github.com/afedynitch/CRFluxModels.git
-[submodule "Python-NRLMSISE-00"]
-	path = Python-NRLMSISE-00
-	url = https://github.com/afedynitch/Python-NRLMSISE-00.git
