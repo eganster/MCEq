@@ -205,8 +205,8 @@ class MCEqParticle(object):
             ]
             self.hadr_yields = {}
             for s in self.hadr_secondaries:
-                self.hadr_yields[s] = hadronic_db.get_matrix(self.pdg_id,
-                                                          s.pdg_id)
+                self.hadr_yields[s] = hadronic_db.get_matrix(
+                    self.pdg_id, s.pdg_id)
         else:
             self.is_projectile = False
             self.hadr_secondaries = []
@@ -370,9 +370,9 @@ class MCEqParticle(object):
         cmat[chidx[0]:chidx[1], projidx[0]:projidx[1]] = self.decay_dists[
             child][chidx[0]:chidx[1], projidx[0]:projidx[1]]
 
-    def get_xlab_dist(self, energy, sec_pdg, verbose=True, **kwargs):
-        """Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
-        to `energy` for hadron-air collisions.
+    def dN_xlab(self, energy, sec_pdg, verbose=True, **kwargs):
+        r"""Returns :math:`dN/dx_{\rm Lab}` for interaction energy close 
+        to ``energy`` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
         
@@ -396,15 +396,15 @@ class MCEqParticle(object):
 
         return xl_grid, xl_dist
 
-    def get_xf_dist(self,
-                    energy,
-                    prim_pdg,
-                    sec_pdg,
-                    pos_only=True,
-                    verbose=True,
-                    **kwargs):
-        """Returns :math:`dN/dx_{\rm F}` in c.m. for interaction energy close 
-        to `energy` for hadron-air collisions.
+    def dN_xf(self,
+              energy,
+              prim_pdg,
+              sec_pdg,
+              pos_only=True,
+              verbose=True,
+              **kwargs):
+        r"""Returns :math:`dN/dx_{\rm F}` in c.m. for interaction energy close 
+        to ``energy`` for hadron-air collisions.
 
         The function respects modifications applied via :func:`_set_mod_pprod`.
         
@@ -413,6 +413,7 @@ class MCEqParticle(object):
             prim_pdg (int): PDG ID of projectile
             sec_pdg (int): PDG ID of secondary particle
             verbose (bool): print out the closest energy
+
         Returns:
             (numpy.array, numpy.array): :math:`x_{\rm F}`, :math:`dN/dx_{\rm F}`
         """
@@ -794,8 +795,6 @@ class ParticleManager(object):
         particle_list = [
             MCEqParticle(p, self._energy_grid, self._cs_db) for p in particles
         ]
-
-        
 
         # Sort by critical energy (= int_len ~== dec_length ~ int_cs/tau)
         particle_list.sort(key=lambda x: x.E_crit, reverse=False)

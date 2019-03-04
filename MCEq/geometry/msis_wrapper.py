@@ -1,11 +1,7 @@
 #! /usr/bin/env python
 from mceq_config import config
 
-if config['msis_python'] == 'ctypes':
-    from c_msis_interface import *
-else:
-    from nrlmsise_00_header import *
-    from nrlmsise_00 import gtd7
+from c_msis_interface import *
 
 #=========================================================================
 # NRLMSISE00

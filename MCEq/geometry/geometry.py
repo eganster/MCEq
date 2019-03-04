@@ -34,7 +34,7 @@ class EarthGeometry(object):
 
         import matplotlib.pyplot as plt
         import numpy as np
-        from MCEq.geometry import *
+        from MCEq.geometry.geometry import *
         from MCEq.misc import theta_rad
 
         g = EarthGeometry()

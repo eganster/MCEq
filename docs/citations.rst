@@ -2,12 +2,12 @@
 Citations (Updated)
 *******************
 
-The first version of the code is feature complete and enters a final stage, 
-where release candidates are circulated. We had several conference papers 
-using ``MCEq``. If you use it in your scientific publication, please cite 
+The first version of the code is feature complete and enters a final stage,
+where release candidates are circulated. We had several conference papers
+using ``MCEq``. If you use it in your scientific publication, please cite
 the code **AND** the physical model publications properly.
 
-Before the main paper is published please continue citing the proceedings below, 
+Before the main paper is published please continue citing the proceedings below,
 which describes a bit of functionality, possibilities and technical details:
 
    | *Calculation of conventional and prompt lepton fluxes at very high energy*
@@ -15,14 +15,14 @@ which describes a bit of functionality, possibilities and technical details:
    | EPJ Web Conf. 99 (2015) 08001
    | `arXiv:1503.00544 <http://arxiv.org/abs/1503.00544>`_
 
-You might want to consider citing the paper which for us was the basis for 
+You might want to consider citing the paper which for us was the basis for
 this type of calculations
 
    | *Influence of hadronic interaction models and the cosmic ray spectrum on the high energy atmospheric muon and neutrino flux*
    | A. Fedynitch, J. B. Tjus, P. Desiati
    | Phys.Rev. D86 (2012) 114024
    | `arXiv:1206.6710 <http://arxiv.org/abs/arXiv:1206.6710>`_
-   
+
 Cosmic-ray flux parametrizations
 --------------------------------
 
@@ -34,7 +34,7 @@ Atmosphere
 
 * CORSIKA parametrizations
     | *CORSIKA: A Monte Carlo Code to Simulate Extensive Air Showers*
-    | D. Heck, J. Knapp, J. Capdevielle, G. Schatz, T. Thouw 
+    | D. Heck, J. Knapp, J. Capdevielle, G. Schatz, T. Thouw
     | Tech. Rep. FZKA 6019, Karsruhe (1998), `link <https://web.ikp.kit.edu/corsika/physics_description/corsika_phys.pdf>`_
 
 * `NRLMSISE-00 <http://ccmc.gsfc.nasa.gov/modelweb/atmos/nrlmsise00.html>`_
@@ -55,7 +55,7 @@ Hadronic interaction models
     | F. Riehn, R. Engel, A. Fedynitch, T. K. Gaisser, T. Stanev
     | EPJ Web Conf. 99 (2015) 12001
     | `arXiv:1502.06353 <https://arxiv.org/abs/arXiv:1502.06353>`_
-    
+
 * SIBYLL-2.1:
     | *Cosmic ray interaction event generator SIBYLL 2.1*
     | E.-J. Ahn, R. Engel, T. K. Gaisser, P. Lipari, T.Stanev
@@ -70,14 +70,14 @@ Hadronic interaction models
 * QGSJET-II-04:
     | *Monte Carlo treatment of hadronic interactions in enhanced Pomeron scheme: I. QGSJET-II model*
     | Sergey Ostapchenko
-    | Phys.Rev. D83 (2011) 014018, 
+    | Phys.Rev. D83 (2011) 014018,
     | `arXiv:1010.1869 <https://arxiv.org/abs/1010.1869>`_
 
 * DPMJET-III:
     | *The Monte Carlo event generator DPMJET-III*
     | S. Roesler, R. Engel, J. Ranft
     | Advanced Monte Carlo for radiation physics, particle transport simulation and applications. Proceedings, Conference, MC2000, Lisbon, Portugal, October 23-26, 2000
-    | `arXiv:hep-ph/0012252 <https://arxiv.org/abs/hep-ph/0012252>`_ 
+    | `arXiv:hep-ph/0012252 <https://arxiv.org/abs/hep-ph/0012252>`_
 
 * DPMJET-III-17.1:
     | *Revision of the high energy hadronic interaction models PHOJET/DPMJET-III*
@@ -85,12 +85,12 @@ Hadronic interaction models
     | 14th International Conference on Nuclear Reaction Mechanisms, Villa Monastero, Varenna, Italy, 15 - 19 Jun 2015, pp.291
     | `on CERN Document Server <http://cds.cern.ch/record/2115393?ln=en>`_
 
-    
+
 Models of charm production
 --------------------------
 
 For prompt fluxes from SIBYLL-2.3, refer to the corresponding proceedings above.
-    
+
 * MRS - Martin-Ryskin-Stasto
     | *Prompt neutrinos from atmospheric* :math:`c\bar{c}` *and* :math:`b\bar{b}` *production and the gluon at very small x*
     | A. D. Martin, M. G. Ryskin, A. M. Stasto

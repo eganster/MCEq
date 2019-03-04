@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 :mod:`MCEq.geometry.density_profiles` - models of the Earth's atmosphere
-===============================================================
+========================================================================
 
 This module includes classes and functions modeling the Earth's atmosphere.
 Currently, two different types models are supported:

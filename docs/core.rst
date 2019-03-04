@@ -21,7 +21,7 @@ Core functionality
 
 ----------
 
-.. automodule:: MCEq.kernels
+.. automodule:: MCEq.solvers
    :members:
 
 ----------
