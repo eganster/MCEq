@@ -18,30 +18,11 @@ import MCEq.data
 from MCEq.particlemanager import _pdata
 from MCEq.misc import is_charm_pdgid, info
 
-
-def clean_data_directory():
-    """Removes all temporary files from the data directory.
-
-    Use it after changes that affect the selection of the
-    low-energy extension, the stable particle selection in the
-    compact mode, changes to interfaces and updates.
-    """
-    import os
-    from os import path
-    datad = path.join(path.dirname(__file__), '..', 'data')
-
-    for fname in os.listdir(datad):
-
-        if 'ledpm' in fname:
-            os.unlink(path.join(datad, fname))
-        elif 'yields_compact' in fname:
-            os.unlink(path.join(datad, fname))
-        elif fname.endswith('.ppd') and 'sibyll23c_aux' not in fname:
-            os.unlink(path.join(datad, fname))
-
+def create_compact_low_e_db(mceq_db):
+    pass
 
 def convert_to_compact(fname):
-    """Converts an interaction model dictionary to "compact" mode.
+    r"""Converts an interaction model dictionary to "compact" mode.
 
     This function takes a compressed yield file, where all secondary
     particle types known to the particular model are expected to be
@@ -55,16 +36,16 @@ def convert_to_compact(fname):
     more stable particles, until only final state particles are left. The list
     of "important" particles is defined in the standard_particles variable below.
     This results in a feed-down corretion, for example the process (chain)
-    :math:`p + A \\to \\rho + X \\to \\pi + \\pi + X` becomes simply
-    :math:`p + A \\to \\pi + \\pi + X`.
+    :math:`p + A \to \rho + X \to \pi + \pi + X` becomes simply
+    :math:`p + A \to \pi + \pi + X`.
     The new interaction yield file obtains the suffix `_compact` and it
     contains only those final state secondary particles:
 
     .. math::
 
-        \pi^+, K^+, K^0_{S,L}, p, n, \\bar{p}, \\bar{n}, \\Lambda^0,
-        \\bar{\Lambda^0}, \\eta, \\phi, \\omega, D^0, D^+, D^+_s +
-        {\\rm c.c.} + {\\rm leptons}
+        \pi^+, K^+, K^0_{S,L}, p, n, \bar{p}, \bar{n}, \Lambda^0,
+        \bar{\Lambda^0}, \eta, \phi, \omega, D^0, D^+, D^+_s +
+        {\rm c.c.} + {\rm leptons}
 
     The compact mode has the advantage, that the production spectra stored in
     this dictionary are directly comparable to what accelerators consider as

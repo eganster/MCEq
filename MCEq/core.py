@@ -65,8 +65,8 @@ class MCEqRun(object):
     def __init__(self, interaction_model, density_model, primary_model,
                  theta_deg, adv_set, **kwargs):
 
-        # from particletools.tables import SibyllParticleTable, PYTHIAParticleData
-        from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
+        import MCEq.data
+        self.mceq_db = MCEq.data.HDF5Database()
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
 
@@ -74,70 +74,49 @@ class MCEqRun(object):
         self.density_config = density_model
         self.theta_deg = theta_deg
 
-        # Load particle production yields
-        self.yields_params = dict(
-            interaction_model=interaction_model, charm_model=None)
         #: handler for decay yield data of type :class:`MCEq.data.InteractionYields`
-        self.y = InteractionYields(**self.yields_params)
-        # Interaction matrices initialization flag
-        self.iam_mat_initialized = False
-        # Load decay spectra
-        self.decays_params = dict(mother_list=self.y.particle_list, )
+        self.interactions = MCEq.data.Interactions(
+            mceq_hdf_db=self.mceq_db, interaction_model=interaction_model)
 
         #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
-        self.decays = DecayYields(**self.decays_params)
+        self.decays = MCEq.data.Decays(
+            mceq_hdf_db=self.mceq_db, parent_list=self.interactions.particles)
 
-        # Load cross-section handling
-        self.cs_params = dict(interaction_model=interaction_model)
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
-        self.cs = HadAirCrossSections(**self.cs_params)
+        self.int_cs = MCEq.data.InteractionCrossSections(
+            mceq_hdf_db=self.mceq_db, interaction_model=interaction_model)
 
-        # Save primary model params
-        self.pm_params = primary_model
+        #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
+        self.cont_losses = MCEq.data.ContinuousLosses(
+            mceq_hdf_db=self.mceq_db, material='air')
 
         # Store adv_set
         self.adv_set = adv_set
 
-        # First interaction mode
-        self.fa_vars = None
-
         # Default GPU device id for CUDA
         self.cuda_device = kwargs['GPU_id'] if 'GPU_id' in kwargs else 0
 
-        # Store array precision (TODO: obsolete this for non GPU runs)
-        if config['FP_precision'] == 32:
-            self.fl_pr = np.float32
-        elif config['FP_precision'] == 64:
-            self.fl_pr = np.float64
-        else:
-            raise Exception("MCEqRun(): Unknown float precision specified.")
-
         # General Matrix dimensions and shortcuts, controlled by
         # grid of yield matrices
-        self._energy_grid = energy_grid(self.y.e_grid, self.y.e_bins,
-                                        self.y.e_bins[1:] - self.y.e_bins[:-1],
-                                        self.y.e_grid.size)
+        self._energy_grid = self.mceq_db.energy_grid
 
         # Custom particle list can be defined
         particle_list = kwargs.pop(
-            'particle_list', self.y.particle_list + self.decays.particle_list)
+            'particle_list',
+            self.interactions.particles + self.decays.particles)
 
         # Create particle database
-        self.pman = ParticleManager(particle_list, self._energy_grid, self.cs)
+        self.pman = ParticleManager(particle_list, self._energy_grid, self.int_cs)
         # Attach decay channels
         self.pman.set_decay_channels(self.decays)
-        # TODO Mofdify this later to work with HDF database
         # Initialize muon energy loss
-        self._init_muon_energy_loss()
-        self.pman.set_continuous_losses({13: self.mu_dEdX, -13: self.mu_dEdX})
+        self.pman.set_continuous_losses(self.cont_losses)
 
         #Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
 
-        # Set id of particles in observer category
-        # self.pman.set_obs_particles(obs_ids)
-
-        self.matrix_builder = MatrixBuilder(self.pman, self.y, self.decays)
+        # Initialize matrix builder
+        self.matrix_builder = MatrixBuilder(self.pman)
 
         # Initialize solution vector
         self._solution = np.zeros(self.pman.dim_states)
@@ -154,7 +133,7 @@ class MCEqRun(object):
 
         # Set initial flux condition
         if primary_model is not None:
-            self.set_primary_model(*self.pm_params)
+            self.set_primary_model(*primary_model)
 
     @property
     def e_grid(self):
@@ -257,7 +236,6 @@ class MCEqRun(object):
 
     def set_interaction_model(self,
                               interaction_model,
-                              charm_model=None,
                               force=False):
         """Sets interaction model and/or an external charm model for calculation.
 
@@ -273,23 +251,15 @@ class MCEqRun(object):
 
         info(1, interaction_model)
 
-        if not force and ((self.yields_params['interaction_model'],
-                           self.yields_params['charm_model']) == (
-                               interaction_model, charm_model)):
+        if not force and (self.interactions.iam != interaction_model):
             info(2, 'Skip, since current model identical to',
-                 interaction_model + '/' + str(charm_model) + '.')
+                 interaction_model + '.')
             return
 
-        self.yields_params['interaction_model'] = interaction_model
-        self.yields_params['charm_model'] = charm_model
+        self.interactions.load(interaction_model)
+        self.int_cs.load(interaction_model)
 
-        self.y.set_interaction_model(interaction_model)
-        self.y._inject_custom_charm_model(charm_model)
-
-        self.cs_params['interaction_model'] = interaction_model
-        self.cs.set_interaction_model(interaction_model)
-
-        self.pman.set_interaction_model(self.cs, self.y)
+        self.pman.set_interaction_model(self.int_cs, self.interactions)
 
         # Update dimensions if particle dimensions changed
         self._phi0.resize(self.dim_states)
@@ -499,7 +469,7 @@ class MCEqRun(object):
             1, '{0}/{1}, {2}, {3}'.format(prim_pdg, sec_pdg, x_func.__name__,
                                           str(x_func_args)))
 
-        init = self.y._set_mod_pprod(prim_pdg, sec_pdg, x_func, x_func_args)
+        init = self.interactions._set_mod_pprod(prim_pdg, sec_pdg, x_func, x_func_args)
 
         # Need to regenerate matrices completely
         return int(init)
@@ -520,7 +490,7 @@ class MCEqRun(object):
         from collections import defaultdict
         info(1, 'Particle production modifications reset to defaults.')
 
-        self.y.mod_pprod = defaultdict(lambda: {})
+        self.interactions.mod_pprod = defaultdict(lambda: {})
         # Need to regenerate matrices completely
         if not dont_fill:
             self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
@@ -583,18 +553,6 @@ class MCEqRun(object):
         info(2,
              'time elapsed during integration: {0} sec'.format(time() - start))
 
-    def _init_muon_energy_loss(self):
-        # Muon energy loss
-        import cPickle as pickle
-        from os.path import join
-        
-        eloss_fname = str(config['mu_eloss_fname'][:-4] + '_centers.ppl')
-        self.mu_dEdX = pickle.load(
-            open(join(config['data_dir'], eloss_fname), 'rb')).astype(
-                self.fl_pr) * 1e-3  # ... to GeV
-
-        self.mu_loss_handler = None
-
     def _calculate_integration_path(self, int_grid, grid_var, force=False):
 
         if (self.integration_path and np.alltrue(int_grid == self.int_grid)
@@ -655,7 +613,7 @@ class MCEqRun(object):
 class MatrixBuilder(object):
     """This class constructs the interaction and decay matrices."""
 
-    def __init__(self, particle_manager, yields, decays):
+    def __init__(self, particle_manager):
         self.pman = particle_manager
         self._energy_grid = self.pman._energy_grid
         self.int_m = None
@@ -706,9 +664,8 @@ class MatrixBuilder(object):
                 self.C_blocks[idx][np.diag_indices(self.dim)] -= 1
 
             if idx in self.C_blocks:
-                # Multiply with Lambda_dec
-                # Keep track the maximal interaction length for the calculation
-                # of integration steps
+                # Multiply with Lambda_int and keep track the maximal
+                # interaction length for the calculation of integration steps
                 self.max_lint = np.max([
                     self.max_lint,
                     np.max(parent.inverse_interaction_length())
@@ -735,9 +692,8 @@ class MatrixBuilder(object):
                     self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
                 if idx not in self.D_blocks:
                     continue
-                # Multiply with Lambda_dec
-                # Track the maximal decay length for the calculation of
-                # integration steps
+                # Multiply with Lambda_dec and keep track of the 
+                # maximal decay length for the calculation of integration steps
                 self.max_ldec = max(
                     [self.max_ldec,
                      np.max(parent.inverse_decay_length())])
@@ -852,30 +808,10 @@ class MatrixBuilder(object):
         self.C_blocks = defaultdict(lambda: self._zero_mat())
         for p in self.pman.cascade_particles:
             # if p doesn't interact, skip interaction matrices
-            if (not p.is_projectile or
-                (abs(p.pdg_id) not in config["adv_set"]["allowed_projectiles"])
-                ):
-                info(
-                    5,
-                    'Particle production by {0} disabled'.format(p.pdg_id),
-                    condition=p.is_projectile)
+            if not p.is_projectile:
                 continue
-
-            elif config['adv_set'][
-                    'disable_sec_interactions'] and p.pdg_id not in [
-                        2212, 2112
-                    ]:
-                info(1, 'Veto secodary interaction of', p.pdg_id)
-                continue
-
             for s in p.hadr_secondaries:
                 if s not in self.pman.cascade_particles:
-                    continue
-                if 'DPMJET' in self.pman.current_hadronic_model and s.is_lepton:
-                    info(1, 'DPMJET hotfix direct leptons', s)
-                    continue
-                if config['adv_set']['disable_direct_leptons'] and s.is_lepton:
-                    info(2, 'veto direct lepton', s)
                     continue
 
                 if not s.is_resonance:

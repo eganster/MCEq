@@ -196,17 +196,17 @@ class MCEqParticle(object):
         self.current_hadronic_model = hadronic_db.iam
 
         # Collect MCEqParticle references to children instead of PDG ID as index
-        if self.pdg_id in hadronic_db.projectiles and not self.is_tracking:
+        if self.pdg_id in hadronic_db.parents and not self.is_tracking:
             self.is_projectile = True
             self.hadr_secondaries = [
                 pmanager.pdg2pref[pid]
-                for pid in hadronic_db.secondary_dict[self.pdg_id]
+                for pid in hadronic_db.relations[self.pdg_id]
                 if abs(pid) < 7000
             ]
             self.hadr_yields = {}
             for s in self.hadr_secondaries:
-                self.hadr_yields[s] = hadronic_db.yields[(self.pdg_id,
-                                                          s.pdg_id)]
+                self.hadr_yields[s] = hadronic_db.get_matrix(self.pdg_id,
+                                                          s.pdg_id)
         else:
             self.is_projectile = False
             self.hadr_secondaries = []
@@ -221,15 +221,15 @@ class MCEqParticle(object):
             self.decay_dists = {}
             return
 
-        if self.pdg_id not in decay_db.mothers:
+        if self.pdg_id not in decay_db.parents:
             raise Exception('Unstable particle without decay distribution:',
                             self.pdg_id, self.name)
 
         self.children = []
-        self.children = [pmanager[d] for d in decay_db.daughters(self.pdg_id)]
+        self.children = [pmanager[d] for d in decay_db.children(self.pdg_id)]
         self.decay_dists = {}
         for c in self.children:
-            self.decay_dists[c] = decay_db.decay_dict[(self.pdg_id, c.pdg_id)]
+            self.decay_dists[c] = decay_db.get_matrix(self.pdg_id, c.pdg_id)
 
     def track_decays(self, tracking_particle):
         # If tracking particle real pdg is not in children raise an exception
@@ -618,7 +618,7 @@ class ParticleManager(object):
         """Sets the inelastic cross section to each interacting particle.
         
         This applies to most of the hadrons and does not imply that the
-        particle becomes a projectile. Projectiles need in addition defined
+        particle becomes a projectile. parents need in addition defined
         hadronic channels.
         """
 

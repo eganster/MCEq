@@ -36,17 +36,8 @@ config = {
     # Directory where the data files for the calculation are stored
     "data_dir": path.join(base_path, 'data'),
 
-    # File name of particle decay spectra
-    "decay_fname": "decay_tables.ppd",
-
-    # File name of the cross-sections tables
-    "cs_fname": "crosssections.ppd",
-
-    # File name of for energy losses
-    "mu_eloss_fname": "dEdX_mu_air.ppl",
-
-    # File where to cache interpolating splines of the atmosphere module
-    'atm_cache_file': 'atm_cache.ppd',
+    # File name of the MCEq database
+    "mceq_db_fname": "mceq_db_1.h5",
 
     # full path to libmkl_rt.[so/dylib] (only if kernel=='MKL')
     "MKL_path": mkl_default + libext,
@@ -176,7 +167,7 @@ config = {
     # Advanced settings (some options might be obsolete/not working)
     "adv_set": {
         # Disable particle production by all hadrons, except nucleons
-        "disable_sec_interactions": False,
+        "disable_interactions_of_unstable": False,
 
         # Disable particle production by charm *projectiles* (interactions)
         "disable_charm_pprod": False,
@@ -186,10 +177,7 @@ config = {
 
         # Disable resonance/prompt contribution (this group of options
         # is either obsolete or needs maintenance.)
-        "disable_resonance_decay": False,
-        "disable_hadrons": [],
-        "disable_resonances": [],
-        "allow_resonances": [],
+        # "disable_resonance_decay": False,
 
         # Allow only those particles to be projectiles (incl. anti-particles)
         # Faster initialization,

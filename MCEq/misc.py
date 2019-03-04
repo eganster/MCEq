@@ -17,6 +17,9 @@ from mceq_config import config
 #: Energy grid (centers, bind widths, dimension)
 energy_grid = namedtuple("energy_grid",("c", "b", "w", "d"))
 
+#: Matrix with x_lab=E_child/E_parent values
+_xmat = None
+
 def normalize_hadronic_model_name(name):
     """Converts hadronic model name into standard form"""
     return name.translate(None, ".-").upper()
@@ -32,6 +35,17 @@ def theta_rad(theta):
     """Converts :math:`\\theta` from rad to degrees.
     """
     return np.deg2rad(theta)
+
+def gen_xmat(energy_grid):
+    """Generates x_lab matrix for a given energy grid"""
+    global _xmat
+    dims = (energy_grid.d, energy_grid.d)
+    if _xmat is None or _xmat.shape != dims:
+        _xmat = np.zeros(dims)
+        for eidx in range(energy_grid.d):
+            xvec = energy_grid.c[:eidx + 1] / energy_grid.c[eidx]
+            _xmat[:eidx + 1, eidx] = xvec
+    return _xmat
 
 
 def print_in_rows(min_dbg_level, str_list, n_cols=8):
@@ -63,28 +77,6 @@ def _get_closest(value, in_list):
 
     minindex = np.argmin(np.abs(in_list - value * np.ones(len(in_list))))
     return minindex, in_list[minindex]
-
-# class EnergyGrid(object):
-#     """Class for constructing a grid for discrete distributions.
-
-#     Since we discretize everything in energy, the name seems appropriate.
-#     All grids are log spaced.
-
-#     Args:
-#         lower (float): log10 of low edge of the lowest bin
-#         upper (float): log10 of upper edge of the highest bin
-#     """
-
-#     def __init__(self, lower, upper, bins_dec):
-#         import numpy as np
-#         self.bins = np.logspace(lower, upper, (upper - lower) * bins_dec + 1)
-#         self.grid = np.sqrt(self.bins[1:] * self.bins[:-1])
-#         self.widths = self.bins[1:] - self.bins[:-1]
-#         self.d = self.grid.size
-#         info(
-#             1, 'Energy grid initialized {0:3.1e} - {1:3.1e}, {2} bins'.format(
-#                 self.bins[0], self.bins[-1], self.grid.size))
-
 
 def getAZN(pdg_id):
     """Returns mass number :math:`A`, charge :math:`Z` and neutron
@@ -133,13 +125,13 @@ def getAZN_corsika(corsikaid):
     return A, Z, A - Z
 
 def corsikaid2pdg(corsika_id):
-    """Conversion of CORSIKA NUCLEAR code to PDG"""
-    if corsika_id == 101:
+    """Conversion of CORSIKA nuclear code to PDG nuclear code"""
+    if corsika_id in [101, 14]:
         return 2212
-    elif corsika_id == 100:
+    elif corsika_id in [100, 13]:
         return 2112
     else:
-        A,Z,N = getAZN_corsika(corsika_id)        
+        A,Z, _ = getAZN_corsika(corsika_id)        
         # 10LZZZAAAI
         pdg_id = 1000000000
         pdg_id += 10*A
@@ -153,85 +145,14 @@ def pdg2corsikaid(pdg_id):
     
         PDG ID for nuclei is coded according to 10LZZZAAAI. For iron-52 it is 1000260520.
     """
+    if pdg_id == 2212:
+        return 14
+
     A = pdg_id % 1000 / 10
     Z = pdg_id % 1000000 / 10000
     
     return A*100 + Z
     
-class EdepZFactors():
-    """Handles calculation of energy dependent Z factors.
-
-    Was not recently checked and results could be wrong."""
-
-    def __init__(self, interaction_model, primary_flux_model):
-        from MCEq.data import InteractionYields, HadAirCrossSections
-        from particletools.tables import SibyllParticleTable
-
-        self.y = InteractionYields(interaction_model)
-        self.cs = HadAirCrossSections(interaction_model)
-
-        self.pm = primary_flux_model
-        self.e_bins, self.e_widths = self._get_bins_and_width_from_centers(
-            self.y.e_grid)
-        self.e_vec = self.y.e_grid
-        self.iamod = interaction_model
-        self.sibtab = SibyllParticleTable()
-        self._gen_integrator()
-
-    def _get_bins_and_width_from_centers(self, vector):
-        """Returns bins and bin widths given given bin centers."""
-
-        vector_log = np.log10(vector)
-        steps = vector_log[1] - vector_log[0]
-        bins_log = vector_log - 0.5 * steps
-        bins_log = np.resize(bins_log, vector_log.size + 1)
-        bins_log[-1] = vector_log[-1] + 0.5 * steps
-        bins = 10**bins_log
-        widths = bins[1:] - bins[:-1]
-        return bins, widths
-
-    def get_zfactor(self, proj, sec_hadr, logx=False, use_cs=True):
-        proj_cs_vec = self.cs.get_cs(proj)
-        nuc_flux = self.pm.tot_nucleon_flux(self.e_vec)
-        zfac = np.zeros(self.y.dim)
-        if self.y.is_yield(proj, sec_hadr):
-            info(1, "calculating zfactor Z({0},{1})".format(proj, sec_hadr))
-            y_mat = self.y.get_y_matrix(proj, sec_hadr)
-
-            self.calculate_zfac(self.e_vec, self.e_widths, nuc_flux,
-                                proj_cs_vec, y_mat, zfac, use_cs)
-
-        if logx:
-            return np.log10(self.e_vec), zfac
-        return self.e_vec, zfac
-
-    def _gen_integrator(self):
-        try:
-            from numba import jit, double, boolean, void
-
-            @jit(
-                void(double[:], double[:], double[:], double[:], double[:, :],
-                     double[:], boolean),
-                target='cpu')
-            def calculate_zfac(e_vec, e_widths, nuc_flux, proj_cs, y, zfac,
-                               use_cs):
-                for h, E_h in enumerate(e_vec):
-                    for k in range(len(e_vec)):
-                        E_k = e_vec[k]
-                        # dE_k = e_widths[k]
-                        if E_k < E_h:
-                            continue
-                        csfac = proj_cs[k] / proj_cs[h] if use_cs else 1.
-
-                        zfac[h] += nuc_flux[k] / nuc_flux[h] * csfac * \
-                            y[:, k][h]  # * dE_k
-        except ImportError:
-            raise Exception("Warning! Numba not in PYTHONPATH. ZFactor " +
-                            "calculation won't work.")
-
-        self.calculate_zfac = calculate_zfac
-
-
 def caller_name(skip=2):
     """Get a name of a caller in the format module.class.method
 
