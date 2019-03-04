@@ -16,6 +16,7 @@ tests/
 # Temporary data files
 *_ledpm.bz2
 *_compact.bz2
+*.h5
 
 # Tables from other publications
 /references/
@@ -23,6 +24,7 @@ tests/
 # Prototype scripts
 prototyping
 *.bak
+temp
 
 # Not licensed
 
