@@ -116,6 +116,8 @@ def getAZN_corsika(corsikaid):
     """
     Z, A = 1, 1
 
+    if corsikaid == 14:
+        return getAZN(2212)
     if corsikaid >= 100:
         Z = corsikaid % 100
         A = (corsikaid - Z) / 100

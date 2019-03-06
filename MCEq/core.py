@@ -74,11 +74,10 @@ class MCEqRun(object):
         self.density_config = density_model
         self.theta_deg = theta_deg
 
-        #: handler for decay yield data of type :class:`MCEq.data.InteractionYields`
+        #: Interface to interaction tables of the HDF5 database
         self.interactions = MCEq.data.Interactions(
             mceq_hdf_db=self.mceq_db, interaction_model=interaction_model)
-
-        #: handler for decay yield data of type :class:`MCEq.data.DecayYields`
+        #: Interface to decay tables of the HDF5 database
         self.decays = MCEq.data.Decays(
             mceq_hdf_db=self.mceq_db, parent_list=self.interactions.particles)
 
@@ -107,25 +106,18 @@ class MCEqRun(object):
 
         # Create particle database
         self.pman = ParticleManager(particle_list, self._energy_grid, self.int_cs)
-        # Attach decay channels
-        self.pman.set_decay_channels(self.decays)
-        # Initialize muon energy loss
-        self.pman.set_continuous_losses(self.cont_losses)
-
-        #Print particle list after tracking particles have been initialized
-        self.pman.print_particle_tables(2)
-
+        # Initialize solution vector
+        self._solution = np.zeros(self.pman.dim_states)
+        # Initialize empty state (particle density) vector
+        self._phi0 = np.zeros(self.pman.dim_states)
         # Initialize matrix builder
         self.matrix_builder = MatrixBuilder(self.pman)
 
-        # Initialize solution vector
-        self._solution = np.zeros(self.pman.dim_states)
-
-        # Initialize empty state (particle density) vector
-        self._phi0 = np.zeros(self.pman.dim_states)
-
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(interaction_model, force=True)
+        
+        #Print particle list after tracking particles have been initialized
+        self.pman.print_particle_tables(2)
 
         # Set atmosphere and geometry TODO do not allow empty density model
         # if density_model is not None:
@@ -251,15 +243,23 @@ class MCEqRun(object):
 
         info(1, interaction_model)
 
-        if not force and (self.interactions.iam != interaction_model):
+        if not force and (self.interactions.iam == interaction_model):
             info(2, 'Skip, since current model identical to',
                  interaction_model + '.')
             return
 
         self.interactions.load(interaction_model)
         self.int_cs.load(interaction_model)
+        self.decays.load(reduced_parent_list=self.interactions.particles)
 
-        self.pman.set_interaction_model(self.int_cs, self.interactions)
+        self.pman.set_interaction_model(
+            self.int_cs,
+            self.interactions,
+            force=force,
+            updated_parent_list=self.interactions.particles +
+            self.decays.particles)
+        self.pman.set_decay_channels(self.decays)
+        self.pman.set_continuous_losses(self.cont_losses)
 
         # Update dimensions if particle dimensions changed
         self._phi0.resize(self.dim_states)
@@ -599,7 +599,6 @@ class MCEqRun(object):
                 grid_step += 1
             dX_vec.append(dX)
             rho_inv_vec.append(ri(X))
-
             X = X + dX
             step += 1
 
@@ -674,7 +673,7 @@ class MatrixBuilder(object):
             # print child.name, parent.name, parent.has_contloss
             if (child.mceqidx == parent.mceqidx and parent.has_contloss
                     and config["enable_muon_energy_loss"]):
-                info(5, 'Taking continuous loss into account for', parent.name)
+                info(5, 'Cont. loss for', parent.name)
                 self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
@@ -692,7 +691,7 @@ class MatrixBuilder(object):
                     self.D_blocks[idx][np.diag_indices(self.dim)] -= 1.
                 if idx not in self.D_blocks:
                     continue
-                # Multiply with Lambda_dec and keep track of the 
+                # Multiply with Lambda_dec and keep track of the
                 # maximal decay length for the calculation of integration steps
                 self.max_ldec = max(
                     [self.max_ldec,
@@ -749,30 +748,35 @@ class MatrixBuilder(object):
         new_mat = np.zeros((self.dim_states, self.dim_states))
         for (c, p), d in blocks.iteritems():
             rc, rp = self.pman.mceqidx2pref[c], self.pman.mceqidx2pref[p]
-            new_mat[rc.lidx:rc.uidx, rp.lidx:rp.uidx] = d
-
+            try:
+                new_mat[rc.lidx:rc.uidx, rp.lidx:rp.uidx] = d
+            except ValueError:
+                raise Exception(
+                    'Dimension mismatch: matrix {0}x{1}, p={2}:({3},{4}), c={5}:({6},{7})'.format(
+                        self.dim_states, self.dim_states, rp.name, rp.lidx, rp.uidx, rc.name, rc.lidx, rc.uidx)
+                    )
         return csr_matrix(new_mat)
 
     def _follow_chains(self, p, pprod_mat, p_orig, idcs, propmat, reclev=0):
         """Some recursive magic.
         """
-        info(10, reclev * '\t', 'entering with', p.name)
+        info(20, reclev * '\t', 'entering with', p.name)
 
         for d in p.children:
-            info(10, reclev * '\t', 'following to', d.name)
+            info(20, reclev * '\t', 'following to', d.name)
             if not d.is_resonance:
                 dprop = self._zero_mat()
                 p._assign_decay_idx(d, idcs, d.hadridx, dprop)
                 propmat[(d.mceqidx, p_orig.mceqidx)] += dprop.dot(pprod_mat)
 
-            if config["debug_level"] >= 10:
+            if config["debug_level"] >= 20:
                 pstr = 'res'
                 dstr = 'Mchain'
                 if idcs == p.hadridx:
                     pstr = 'prop'
                     dstr = 'Mprop'
                 info(
-                    10, reclev * '\t',
+                    20, reclev * '\t',
                     'setting {0}[({1},{3})->({2},{4})]'.format(
                         dstr, p_orig.name, d.name, pstr, 'prop'))
 
@@ -783,7 +787,7 @@ class MatrixBuilder(object):
                 self._follow_chains(d, dres.dot(pprod_mat), p_orig, d.residx,
                                     propmat, reclev)
             else:
-                info(10, reclev * '\t', '\t terminating at', d.name)
+                info(20, reclev * '\t', '\t terminating at', d.name)
 
     def _fill_matrices(self, skip_decay_matrix=False):
         """Generates the C and D matrix from scratch.
@@ -809,6 +813,7 @@ class MatrixBuilder(object):
         for p in self.pman.cascade_particles:
             # if p doesn't interact, skip interaction matrices
             if not p.is_projectile:
+                info(10, 'No interactions by {0}.'.format(p.name))
                 continue
             for s in p.hadr_secondaries:
                 if s not in self.pman.cascade_particles:

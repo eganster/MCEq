@@ -474,11 +474,16 @@ class Decays(object):
 
         # Advanced options
         regenerate_index = False
-        # if (reduced_parent_list):
-        #     self.parents = [
-        #         p for p in self.parents if p in reduced_parent_list or 10 < abs(p) < 20
-        #     ]
-        #     regenerate_index = True
+        if (reduced_parent_list):
+            # Take only the parents provided by the list
+            self.parents = [
+                p for p in self.parents if p in reduced_parent_list
+            ]
+            # Add the decay products, which can become new parents
+            self.parents += list(np.unique(np.concatenate(
+                [self.relations[p] for p in self.parents])))
+            regenerate_index = True
+            
         if (config['adv_set']['disable_decays']):
             self.parents = [
                 p for p in self.parents
@@ -599,9 +604,9 @@ class InteractionCrossSections(object):
         scale = 1.0
         if not mbarn:
             scale = self.mbarn2cm2
-        if abs(parent) in self.index_d.keys():
+        if abs(parent) in self.index_d.keys() and not 5 < abs(parent) < 23:
             return scale * self.index_d[parent]
-        elif abs(parent) in [411, 421, 431, 15]:
+        elif abs(parent) in [411, 421, 431]:
             info(7, message_templ.format('D', 'K+-'))
             return scale * self.index_d[321]
         elif abs(parent) in [4332, 4232, 4132]:
@@ -610,7 +615,7 @@ class InteractionCrossSections(object):
         elif abs(parent) > 2000 and abs(parent) < 5000:
             info(7, message_templ.format(parent, 'nucleon'))
             return scale * self.index_d[2212]
-        elif 5 < abs(parent) < 23 or 7000 < abs(parent) < 7500:
+        elif 5 < abs(parent) < 23:
             info(7, 'returning 0 cross-section for lepton', parent)
             return np.zeros_like(self.index_d[2212])
         else:
