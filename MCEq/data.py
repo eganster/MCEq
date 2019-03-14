@@ -16,13 +16,30 @@ validating data structures:
 
 import numpy as np
 import h5py
-
+from collections import defaultdict
 from mceq_config import config
 from os.path import join
 from misc import normalize_hadronic_model_name, is_charm_pdgid, info
 
+equivalences = {
+    'SIBYLL': {
+        130: 310,
+        3212: 3122,
+        -3212: -3122
+    },
+    'QGSJET': {
+        -2212: 2212,
+        -2112: 2212,
+        -211: 211,
+        -321: 321,
+        130: 321,
+        310: 321,
+        2112: 2212
+    }
+}
 
-class HDF5Database(object):
+
+class HDF5Backend(object):
     """Provides access to tabulated data stored in an HDF5 file.
 
     The file contains all necessary ingredients to run MCEq, i.e. no
@@ -37,16 +54,28 @@ class HDF5Database(object):
         with h5py.File(self.h5fname, 'r') as mceq_db:
             from MCEq.misc import energy_grid
             ca = mceq_db['common'].attrs
-            self._energy_grid = energy_grid(ca['e_grid'], ca['e_bins'],
-                                            ca['widths'], ca['e_dim'])
+            min_idx, max_idx = self._eval_energy_cuts(ca['e_grid'])
+            self._energy_grid = energy_grid(ca['e_grid'][min_idx:max_idx],
+                                            ca['e_bins'][min_idx:max_idx + 1],
+                                            ca['widths'][min_idx:max_idx],
+                                            max_idx - min_idx)
+            self.min_idx, self.max_idx, self.dim_full = min_idx, max_idx, ca['e_dim']
 
     @property
     def energy_grid(self):
         return self._energy_grid
 
-    def _gen_db_dictionary(self, hdf_root):
-        from collections import defaultdict
+    def _eval_energy_cuts(self, e_centers):
+        min_idx, max_idx = 0, len(e_centers)
+        if config['e_min'] is not None:
+            min_idx = np.argmin(np.abs(e_centers - config['e_min']))
+        if config['e_max'] is not None:
+            max_idx = np.argmin(np.abs(e_centers - config['e_max']))
+        return min_idx, max_idx
 
+    def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
+        
+        from scipy.sparse import csr_matrix
         index_d = {}
         relations = defaultdict(lambda: [])
         particle_list = []
@@ -55,15 +84,51 @@ class HDF5Database(object):
         else:
             description = None
         mat_data = hdf_root[:, :]
-        dim = self._energy_grid.d
+        indptr_data = indptrs[:]
+        dim_full = self.dim_full
 
+        parent_child_tups = hdf_root.attrs['tuple_idcs']
+        len_data = hdf_root.attrs['len_data']
+
+        exclude = config['adv_set']["disabled_particles"]
+        read_idx = 0
+        
         for tupidx, tup in enumerate(hdf_root.attrs['tuple_idcs']):
-            parent_pdg, child_pdg = tup
+            
+            if len(tup) == 4:
+                parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
+            elif len(tup) == 2:
+                parent_pdg, child_pdg = (tup[0], 0), (tup[1], 0)
+            else:
+                raise Exception('Failed decoding parent-child relation.')
+            
+            if (abs(parent_pdg[0]) in exclude) or (abs(
+                    child_pdg[0]) in exclude):
+                read_idx += len_data[tupidx]
+                continue
+
             particle_list.append(parent_pdg)
             particle_list.append(child_pdg)
-            index_d[(parent_pdg,
-                     child_pdg)] = mat_data[tupidx * dim:(tupidx + 1) * dim, :]
+
+            index_d[(parent_pdg, child_pdg)] = (csr_matrix(
+                (mat_data[0, read_idx:read_idx + len_data[tupidx]],
+                 mat_data[1, read_idx:read_idx + len_data[tupidx]],
+                 indptr_data[tupidx, :]),
+                shape=(self.dim_full, self.dim_full
+                       ))[self.min_idx:self.max_idx, self.min_idx:self.max_idx]).todense()
+
             relations[parent_pdg].append(child_pdg)
+
+            # Link equivalent interactions
+            if parent_pdg in equivalences:
+                info(20, 'Applying equivalent interaction matrices to',
+                     parent_pdg)
+                particle_list.append(equivalences[parent_pdg])
+                index_d[(equivalences[parent_pdg],
+                         child_pdg)] = index_d[(parent_pdg, child_pdg)]
+                relations[equivalences[parent_pdg]] = relations[parent_pdg]
+
+            read_idx += len_data[tupidx]
 
         return {
             'parents': sorted(relations.keys()),
@@ -86,8 +151,26 @@ class HDF5Database(object):
         with h5py.File(self.h5fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['hadronic_interactions'],
                                         mname)
+            if 'SIBYLL' in mname:
+                eqv = equivalences['SIBYLL']
+            elif 'QGSJET' in mname:
+                eqv = equivalences['QGSJET']
             int_index = self._gen_db_dictionary(
-                mceq_db['hadronic_interactions'][mname])
+                mceq_db['hadronic_interactions'][mname],
+                mceq_db['hadronic_interactions'][mname + '_indptrs'],
+                equivalences=eqv)
+
+            # Append electromagnetic interaction matrices from EmCA
+            if config['enable_em']:
+                info(2, 'Injecting EmCA matrices into interaction_db.')
+                self._check_subgroup_exists(mceq_db, 'electromagnetic')
+                em_index = self._gen_db_dictionary(
+                    mceq_db['electromagnetic']['emca_mats'],
+                    mceq_db['electromagnetic']['emca_mats' + '_indptrs'])
+                int_index['parents'] = sorted(int_index['parents'] + em_index['parents'])
+                int_index['particles'] = sorted(list(set(int_index['particles'] + em_index['particles'])))
+                int_index['relations'].update(em_index['relations'])
+                int_index['index_d'].update(em_index['index_d'])
 
         return int_index
 
@@ -96,7 +179,39 @@ class HDF5Database(object):
         with h5py.File(self.h5fname, 'r') as mceq_db:
             self._check_subgroup_exists(mceq_db['decays'], decay_dset_name)
             dec_index = self._gen_db_dictionary(
-                mceq_db['decays'][decay_dset_name])
+                mceq_db['decays'][decay_dset_name],
+                mceq_db['decays'][decay_dset_name + '_indptrs'])
+
+            if config["muon_helicity_dependence"]:
+                info(2,'Using helicity dependent decays.')
+                custom_index = self._gen_db_dictionary(
+                    mceq_db['decays']['custom_decays'],
+                    mceq_db['decays']['custom_decays' + '_indptrs'])
+                # for tup in custom_index['index_d']:
+                    # if tup not in dec_index['index_d']:
+                    #     info(2, tup, 'was not in normal decay_db.')
+                    #     continue
+
+                info(2, 'Replacing decay from custom decay_db.')
+                dec_index['index_d'].update(custom_index['index_d'])
+
+                # Remove manually TODO: Kaon decays to muons assumed only two-body
+                _ = dec_index['index_d'].pop(((211,0),(-13,0)))
+                _ = dec_index['index_d'].pop(((-211,0),(13,0)))
+                _ = dec_index['index_d'].pop(((321,0),(-13,0)))
+                _ = dec_index['index_d'].pop(((-321,0),(13,0)))
+                
+                dec_index['relations'] = defaultdict(lambda : [])
+                dec_index['particles'] = []
+
+                for idx_tup in dec_index['index_d']:
+                    parent, child = idx_tup
+                    dec_index['relations'][parent].append(child)
+                    dec_index['particles'].append(parent)
+                    dec_index['particles'].append(child)
+
+                dec_index['parents'] = sorted(dec_index['relations'].keys())
+                dec_index['particles'] = sorted(list(set(dec_index['particles'])))
 
         return dec_index
 
@@ -108,9 +223,21 @@ class HDF5Database(object):
             cs_db = mceq_db['cross_sections'][mname]
             cs_data = cs_db[:]
             index_d = {}
-            parents = cs_db.attrs['projectiles']
+            parents = list(cs_db.attrs['projectiles'])
             for ip, p in enumerate(parents):
-                index_d[p] = cs_data[:, ip]
+                index_d[p] = cs_data[self.min_idx:self.max_idx, ip]
+
+            # Append electromagnetic interaction cross sections from EmCA
+            if config["enable_em"]:
+                self._check_subgroup_exists(mceq_db, 'electromagnetic')
+                em_cs = mceq_db["electromagnetic"]['cs'][:]
+                em_parents = list(mceq_db["electromagnetic"]['cs'].attrs['projectiles'])
+                for ip, p in enumerate(em_parents):
+                    if p in index_d:
+                        raise Exception('EM cross sections already in database?')
+
+                    index_d[p] = em_cs[ip, self.min_idx:self.max_idx]
+                parents += em_parents
 
         return {'parents': parents, 'index_d': index_d}
 
@@ -122,7 +249,13 @@ class HDF5Database(object):
 
             index_d = {}
             for pstr in cl_db.keys():
-                index_d[int(pstr)] = cl_db[pstr][:]
+                index_d[int(pstr)] = cl_db[pstr][self.min_idx:self.max_idx]
+            if config['enable_em']:
+                self._check_subgroup_exists(mceq_db, 'electromagnetic')
+                index_d[11] = -mceq_db["electromagnetic"]['ion_emi'][
+                    self.min_idx:self.max_idx, self.min_idx:self.max_idx]
+                index_d[-11] = -mceq_db["electromagnetic"]['ion_epl'][
+                    self.min_idx:self.max_idx, self.min_idx:self.max_idx]
 
         return {'parents': sorted(index_d.keys()), 'index_d': index_d}
 
@@ -148,7 +281,7 @@ class Interactions(object):
     def __init__(self, mceq_hdf_db, interaction_model='SIBYLL2.3c'):
         from collections import defaultdict
 
-        #: MCEq HDF5Database reference
+        #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
         self.energy_grid = mceq_hdf_db.energy_grid
@@ -187,11 +320,11 @@ class Interactions(object):
         # Advanced options
         regenerate_index = False
         if (config['adv_set']['disable_charm_pprod']):
-            self.parents = [p for p in self.parents if not is_charm_pdgid(p)]
+            self.parents = [p for p in self.parents if not is_charm_pdgid(p[0])]
             regenerate_index = True
         if (config['adv_set']['disable_interactions_of_unstable']):
             self.parents = [
-                p for p in self.parents if p not in [2212, 2112, -2212, -2112]
+                p for p in self.parents if p[0] not in [2212, 2112, -2212, -2112]
             ]
             regenerate_index = True
         if (config['adv_set']['allowed_projectiles']):
@@ -214,9 +347,8 @@ class Interactions(object):
             info(5, 'Hotfix for DPMJET, no direct leptons')
             for p in self.relations.keys():
                 self.relations[p] = [
-                    c for c in self.relations[p] if not 10 < abs(c) < 20
+                    c for c in self.relations[p] if not 10 < abs(c[0]) < 20
                 ]
-
 
     def __getitem__(self, key):
         return self.get_matrix(*key)
@@ -453,12 +585,12 @@ class Decays(object):
     def __init__(self, mceq_hdf_db, parent_list=None,
                  decay_dset='full_decays'):
 
-        #: MCEq HDF5Database reference
+        #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
         self.energy_grid = mceq_hdf_db.energy_grid
         #: (list) List of particles in the decay matrices
-        self.parent_list = []
+        self.parent_list = parent_list
         #load defaults
         self.load(parent_list, decay_dset)
 
@@ -471,7 +603,6 @@ class Decays(object):
         self.relations = index['relations']
         self.index_d = index['index_d']
         self.description = index['description']
-
         # Advanced options
         regenerate_index = False
         if (reduced_parent_list):
@@ -480,17 +611,16 @@ class Decays(object):
                 p for p in self.parents if p in reduced_parent_list
             ]
             # Add the decay products, which can become new parents
-            self.parents += list(np.unique(np.concatenate(
-                [self.relations[p] for p in self.parents])))
+            self.parents += sorted(list(set([p for p in self.parents for p in self.relations[p]])))
             regenerate_index = True
             
+        
         if (config['adv_set']['disable_decays']):
             self.parents = [
                 p for p in self.parents
-                if p not in config['adv_set']['disable_decays']
+                if p[0] not in config['adv_set']['disable_decays']
             ]
             regenerate_index = True
-
         if regenerate_index:
             self.particles = []
             for p in self.relations.keys():
@@ -511,7 +641,8 @@ class Decays(object):
     def children(self, parent_pdg):
 
         if parent_pdg not in self.relations:
-            raise Exception('Parent {0} not in decay database.'.format(parent_pdg))
+            raise Exception(
+                'Parent {0} not in decay database.'.format(parent_pdg))
 
         return self.relations[parent_pdg]
 
@@ -556,7 +687,7 @@ class InteractionCrossSections(object):
 
     def __init__(self, mceq_hdf_db, interaction_model='SIBYLL2.3c'):
 
-        #: MCEq HDF5Database reference
+        #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
         self.energy_grid = mceq_hdf_db.energy_grid
@@ -604,23 +735,24 @@ class InteractionCrossSections(object):
         scale = 1.0
         if not mbarn:
             scale = self.mbarn2cm2
-        if abs(parent) in self.index_d.keys() and not 5 < abs(parent) < 23:
+        if parent in self.index_d.keys():
             return scale * self.index_d[parent]
         elif abs(parent) in [411, 421, 431]:
-            info(7, message_templ.format('D', 'K+-'))
+            info(15, message_templ.format('D', 'K+-'))
             return scale * self.index_d[321]
         elif abs(parent) in [4332, 4232, 4132]:
-            info(7, message_templ.format('charmed baryon', 'nucleon'))
+            info(15, message_templ.format('charmed baryon', 'nucleon'))
             return scale * self.index_d[2212]
         elif abs(parent) > 2000 and abs(parent) < 5000:
-            info(7, message_templ.format(parent, 'nucleon'))
+            info(15, message_templ.format(parent, 'nucleon'))
             return scale * self.index_d[2212]
         elif 5 < abs(parent) < 23:
-            info(7, 'returning 0 cross-section for lepton', parent)
+            info(15, 'returning 0 cross-section for lepton', parent)
             return np.zeros_like(self.index_d[2212])
         else:
-            info(7, message_templ.format(parent, 'pion'))
+            info(15, message_templ.format(parent, 'pion'))
             return scale * self.index_d[211]
+
 
 class ContinuousLosses(object):
     """Class for managing the dictionary of hadron-air cross-sections.
@@ -635,7 +767,7 @@ class ContinuousLosses(object):
 
     def __init__(self, mceq_hdf_db, material='air'):
 
-        #: MCEq HDF5Database reference
+        #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
         self.energy_grid = mceq_hdf_db.energy_grid

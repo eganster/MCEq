@@ -54,12 +54,15 @@ class MCEqParticle(object):
 
     def __init__(self,
                  pdg_id,
+                 helicity,
                  energy_grid=None,
                  cs_db=None,
                  init_pdata_defaults=True):
 
         #: (bool) if it's an electromagnetic particle
         self.is_em = abs(pdg_id) == 11 or pdg_id == 22
+        #: (int) helicity -1, 0, 1 (0 means undefined or average)
+        self.helicity = helicity
         #: (bool) particle is a nucleus (not yet implemented)
         self.is_nucleus = False
         #: (bool) particle is a hadron
@@ -91,11 +94,11 @@ class MCEqParticle(object):
         #: (bool) is a tracking particle
         self.is_tracking = False
         #: decay channels if any
-        self.decay_channels = {}
+        self.decay_dists = {}
         #: (int) Particle Data Group Monte Carlo particle ID
-        self.pdg_id = pdg_id
+        self.pdg_id = (pdg_id, helicity)
         #: (int) Unique PDG ID that is different for tracking particles
-        self.unique_pdg_id = pdg_id
+        self.unique_pdg_id = (pdg_id, helicity)
         #: (int) MCEq ID
         self.mceqidx = -1
 
@@ -133,38 +136,43 @@ class MCEqParticle(object):
     def _init_defaults_from_pythia_database(self):
         """Init some particle properties from :mod:`particletools.tables`."""
         #: (bool) particle is a nucleus (not yet implemented)
-        self.is_nucleus = _pdata.is_nucleus(self.pdg_id)
+        self.is_nucleus = _pdata.is_nucleus(self.pdg_id[0])
         #: (bool) particle is a hadron
-        self.is_hadron = _pdata.is_hadron(self.pdg_id)
+        self.is_hadron = _pdata.is_hadron(self.pdg_id[0])
         #: (bool) particle is a hadron
-        self.is_lepton = _pdata.is_lepton(self.pdg_id)
+        self.is_lepton = _pdata.is_lepton(self.pdg_id[0])
         #: Mass, charge, neutron number
-        self.A, self.Z, self.N = getAZN(self.pdg_id)
+        self.A, self.Z, self.N = getAZN(self.pdg_id[0])
         #: (float) ctau in cm
-        self.ctau = _pdata.ctau(self.pdg_id)
+        self.ctau = _pdata.ctau(self.pdg_id[0])
         #: (float) mass in GeV
-        self.mass = _pdata.mass(self.pdg_id)
+        self.mass = _pdata.mass(self.pdg_id[0])
         #: (str) species name in string representation
-        self.name = _pname(self.pdg_id) if self.name is None else self.name
+        name = _pname(self.pdg_id[0]) if self.name is None else self.name
+        if self.helicity == -1:
+            name += '_l'
+        elif self.helicity == +1:
+            name += '_r'
+        self.name = name
         #: (bool) particle is stable
         #: TODO the exclusion of neutron decays is a hotfix
-        self.is_stable = not self.ctau < np.inf or abs(self.pdg_id) == 2112
+        self.is_stable = not self.ctau < np.inf or abs(self.pdg_id[0]) == 2112
 
-    def init_custom_particle_data(self, name, pdg_id, ctau, mass, **kwargs):
+    def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs):
         """Add custom particle type. (Incomplete and not debugged)"""
         #: (int) Particle Data Group Monte Carlo particle ID
-        self.pdg_id = pdg_id
+        self.pdg_id = (pdg_id, helicity)
         #: (bool) if it's an electromagnetic particle
         self.is_em = kwargs.pop('is_em', abs(pdg_id) == 11 or pdg_id == 22)
         #: (bool) particle is a nucleus (not yet implemented)
         self.is_nucleus = kwargs.pop('is_nucleus',
-                                     _pdata.is_nucleus(self.pdg_id))
+                                     _pdata.is_nucleus(self.pdg_id[0]))
         #: (bool) particle is a hadron
-        self.is_hadron = kwargs.pop('is_hadron', _pdata.is_hadron(self.pdg_id))
+        self.is_hadron = kwargs.pop('is_hadron', _pdata.is_hadron(self.pdg_id[0]))
         #: (bool) particle is a hadron
-        self.is_lepton = kwargs.pop('is_lepton', _pdata.is_lepton(self.pdg_id))
+        self.is_lepton = kwargs.pop('is_lepton', _pdata.is_lepton(self.pdg_id[0]))
         #: Mass, charge, neutron number
-        self.A, self.Z, self.N = getAZN(self.pdg_id)
+        self.A, self.Z, self.N = getAZN(self.pdg_id[0])
         #: (float) ctau in cm
         self.ctau = ctau
         #: (float) mass in GeV
@@ -178,7 +186,7 @@ class MCEqParticle(object):
         """Set cross section adn recalculate the dependent variables"""
 
         self.current_cross_sections = cs_db.iam
-        self.cs = cs_db[self.pdg_id]
+        self.cs = cs_db[self.pdg_id[0]]
         if sum(self.cs) > 0:
             self.can_interact = True
         else:
@@ -492,7 +500,7 @@ class MCEqParticle(object):
         max_density = config['max_density']
         no_mix = config["adv_set"]['no_mixing']
 
-        if abs(self.pdg_id) in [2212]:
+        if abs(self.pdg_id[0]) in [2212]:
             self.mix_idx = 0
             self.is_mixed = False
             return
@@ -500,17 +508,20 @@ class MCEqParticle(object):
 
         inv_intlen = self.inverse_interaction_length()
         inv_declen = self.inverse_decay_length()
-        if (not np.any(inv_declen > 0.) or abs(
-                self.pdg_id) in config["adv_set"]["exclude_from_mixing"]):
-            self.mix_idx = 0
-            self.is_mixed = False
-            self.is_resonance = False
-            return
-
-        if np.abs(self.pdg_id) in config["adv_set"]["force_resonance"]:
+        # with np.errstate(invalid='ignore'):
+        #     if (not np.any(inv_declen > 0.) or abs(
+        #             self.pdg_id[0]) in config["adv_set"]["exclude_from_mixing"]):
+        #         self.mix_idx = 0
+        #         self.is_mixed = False
+        #         self.is_resonance = False
+        #         print 'Yo', self.name, inv_declen
+        #         return
+        if (np.abs(self.pdg_id[0]) in config["adv_set"]["force_resonance"]
+                or (np.all(inv_declen == 0.) and not self.is_lepton)):
             threshold = 0.
         elif np.any(inv_intlen > 0.):
-            lint = 1. / inv_intlen
+            with np.errstate(divide='ignore'):
+                lint = 1. / inv_intlen
             d_tilde = np.zeros_like(inv_intlen)
             d_tilde[inv_declen > 0] = 1. / inv_declen[inv_declen > 0]
             # multiply with maximal density encountered along the
@@ -716,14 +727,27 @@ class ParticleManager(object):
             tracking_particle.is_tracking = True
             tracking_particle.name = alias_name
             # Find a unique PDG ID for the new tracking particle
-            unique_child_pdg = int(child_pdg + copysign(1000000, child_pdg))
-            while (unique_child_pdg in self.pdg2pref.keys()):
-                unique_child_pdg += int(copysign(10000, unique_child_pdg))
+            # print child_pdg[0], int(copysign(1000000, child_pdg[0]))
+            unique_child_pdg = (
+                child_pdg[0] + int(copysign(1000000, child_pdg[0])),
+                tracking_particle.helicity)
+
+            for i in range(100):
+                if unique_child_pdg not in self.pdg2pref.keys():
+                    break
+                info(
+                    20, '{0}: trying to find unique_pdg ({1}) for {2}'.format(
+                        i, tracking_particle.name, unique_child_pdg))
+                unique_child_pdg = (
+                    unique_child_pdg[0] + int(copysign(10000, child_pdg[0])),
+                    tracking_particle.helicity)
             tracking_particle.unique_pdg_id = unique_child_pdg
 
         # Track if attempt to add the tracking particle succeeded at least once
         track_success = False
-        for parent_pdg in np.unique(parent_list + [-p for p in parent_list]):
+        #Include antiparticle
+
+        for parent_pdg in list(set(parent_list + [(-p, h) for (p, h) in parent_list])):
             if parent_pdg not in self.pdg2pref:
                 info(10,
                      'Parent particle {0} does not exist.'.format(parent_pdg))
@@ -798,7 +822,7 @@ class ParticleManager(object):
 
         # Initialize particle objects
         particle_list = [
-            MCEqParticle(p, self._energy_grid, self._cs_db) for p in particles
+            MCEqParticle(pdg, hel, self._energy_grid, self._cs_db) for pdg, hel in particles
         ]
 
         # Sort by critical energy (= int_len ~== dec_length ~ int_cs/tau)
@@ -870,8 +894,12 @@ class ParticleManager(object):
         """Add default tracking particles for leptons from pi, K, and mu"""
         # Init default tracking particles
         info(1, 'Initializing default tracking categories (pi, K, mu)')
-        for parent, prefix in [(211, 'pi_'), (321, 'k_'), (13, 'mu_')]:
-            self.track_leptons_from([parent], prefix, exclude_em=True)
+        for parents, prefix in [([(211, 0)], 'pi_'), ([(321, 0)], 'k_'),
+                                ([(13, -1), (13, 1)], 'mulr_'),
+                                ([(13, 0)], 'muh0_'),
+                                ([(13, -1), (13, 0), (13, 1)], 'mu_'),
+                                ([(310, 0), (130, 0)], 'K0_')]:
+            self.track_leptons_from(parents, prefix, exclude_em=True)
 
         # Track prompt leptons
         self.track_leptons_from([
@@ -883,10 +911,10 @@ class ParticleManager(object):
 
     def __getitem__(self, pdg_id_or_name):
         """Returns reference to particle object."""
-        if isinstance(pdg_id_or_name, six.integer_types):
+        if isinstance(pdg_id_or_name, tuple):
             return self.pdg2pref[pdg_id_or_name]
         else:
-            return self.pdg2pref[_pname(pdg_id_or_name)]
+            return self.pdg2pref[_pname(pdg_id_or_name[0])]
 
     def keys(self):
         """Returns pdg_ids of all particles"""

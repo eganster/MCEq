@@ -37,7 +37,7 @@ config = {
     "data_dir": path.join(base_path, 'data'),
 
     # File name of the MCEq database
-    "mceq_db_fname": "mceq_db_1.h5",
+    "mceq_db_fname": "mceq_db_fine.h5",
 
     # full path to libmkl_rt.[so/dylib] (only if kernel=='MKL')
     "MKL_path": mkl_default + libext,
@@ -75,6 +75,16 @@ config = {
     #===========================================================================
     # Parameters of numerical integration
     #===========================================================================
+
+    # Minimal energy for grid has to be > 1e-5 GeV
+    "e_min" : 1.,
+
+    # Maximal energy for grid has to be < 1e12 GeV
+    "e_max" : 1e9,
+
+    # Enable electromagnetic cascade with matrices from EmCA
+    "enable_em" : True,
+
 
     # Selection of integrator (euler/odepack)
     "integrator": "euler",
@@ -134,10 +144,16 @@ config = {
     # Muon energy loss according to Kokoulin et al.
     "enable_muon_energy_loss": True,
 
+    # enable EM ionization loss
+    "enable_em_ion" : True,
+    
     # When using modified particle production matrices use
     # isospin symmetries to determine the corresponding
     # modification for neutrons and K0L/K0S
     "use_isospin_sym": True,
+
+    # Helicity dependent muons decays from analytical expressions
+    "muon_helicity_dependence":True,
 
     # All of the hadronic interaction models can simulate nucleon-air
     # interactions down to ~60 GeV (lab frame). This limits the
@@ -185,7 +201,10 @@ config = {
         # precision loss ~ 1%, for SIBYLL2.3.X with charm 5% above 10^7 GeV
         # Might be different for yields (set_single_primary_particle)
         # For full precision or if in doubt, use []
-        "allowed_projectiles": [2212, 2112, 211, 321, 130],
+        "allowed_projectiles": [2212, 2112, 211, 321, 130, 11, 22],
+
+        # Disable particle (production)
+        "disabled_particles": [10313],
 
         # Disable leptons coming from prompt hadron decays at the vertex
         "disable_direct_leptons": False,
@@ -200,7 +219,7 @@ config = {
         "disable_decays": [],
 
         # Force particles to be treated as resonance (astrophysical muons)
-        "force_resonance": [],
+        "force_resonance": [15],
 
         # Disable mixing between resonance approx. and full propagation
         "no_mixing": False
