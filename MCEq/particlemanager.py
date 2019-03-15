@@ -315,7 +315,7 @@ class MCEqParticle(object):
             # TODO: verify how much this affects the result
             return 0.9966 * dlen  # Correction for bin average
         except ZeroDivisionError:
-            return np.zeros_like(self._energy_grid.d)
+            return np.ones_like(self._energy_grid.d)*np.inf
 
     def inel_cross_section(self, mbarn=False):
         """Returns inverse interaction length for A_target given by config.
@@ -397,8 +397,7 @@ class MCEqParticle(object):
 
         m = self.hadr_yields[sec_pdg]
         xl_grid = self._energy_grid.c[:eidx + 1] / en
-        xl_dist = xl_grid * en * m[:eidx + 1, eidx]  #/ np.diag(
-        # self._energy_grid.w)[:eidx + 1]
+        xl_dist = xl_grid * m[:eidx + 1, eidx]#/self._energy_grid.w[:eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -500,22 +499,17 @@ class MCEqParticle(object):
         max_density = config['max_density']
         no_mix = config["adv_set"]['no_mixing']
 
-        if abs(self.pdg_id[0]) in [2212]:
-            self.mix_idx = 0
-            self.is_mixed = False
-            return
         d = self._energy_grid.d
 
         inv_intlen = self.inverse_interaction_length()
         inv_declen = self.inverse_decay_length()
-        # with np.errstate(invalid='ignore'):
-        #     if (not np.any(inv_declen > 0.) or abs(
-        #             self.pdg_id[0]) in config["adv_set"]["exclude_from_mixing"]):
-        #         self.mix_idx = 0
-        #         self.is_mixed = False
-        #         self.is_resonance = False
-        #         print 'Yo', self.name, inv_declen
-        #         return
+
+        if (not np.any(np.nan_to_num(inv_declen) > 0.) or abs(
+                self.pdg_id[0]) in config["adv_set"]["exclude_from_mixing"]):
+            self.mix_idx = 0
+            self.is_mixed = False
+            self.is_resonance = False
+            return
         if (np.abs(self.pdg_id[0]) in config["adv_set"]["force_resonance"]
                 or (np.all(inv_declen == 0.) and not self.is_lepton)):
             threshold = 0.
@@ -531,6 +525,7 @@ class MCEqParticle(object):
         else:
             threshold = np.inf
             no_mix = True
+
         if np.max(threshold) < cross_over:
             self.mix_idx = d - 1
             self.E_mix = self._energy_grid.c[self.mix_idx]
@@ -913,6 +908,8 @@ class ParticleManager(object):
         """Returns reference to particle object."""
         if isinstance(pdg_id_or_name, tuple):
             return self.pdg2pref[pdg_id_or_name]
+        elif isinstance(pdg_id_or_name, six.integer_types):
+            return self.pdg2pref[(pdg_id_or_name, 0)]
         else:
             return self.pdg2pref[_pname(pdg_id_or_name[0])]
 

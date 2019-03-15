@@ -74,7 +74,7 @@ class HDF5Backend(object):
         return min_idx, max_idx
 
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
-        
+
         from scipy.sparse import csr_matrix
         index_d = {}
         relations = defaultdict(lambda: [])
@@ -92,16 +92,16 @@ class HDF5Backend(object):
 
         exclude = config['adv_set']["disabled_particles"]
         read_idx = 0
-        
+
         for tupidx, tup in enumerate(hdf_root.attrs['tuple_idcs']):
-            
+
             if len(tup) == 4:
                 parent_pdg, child_pdg = tuple(tup[:2]), tuple(tup[2:])
             elif len(tup) == 2:
                 parent_pdg, child_pdg = (tup[0], 0), (tup[1], 0)
             else:
                 raise Exception('Failed decoding parent-child relation.')
-            
+
             if (abs(parent_pdg[0]) in exclude) or (abs(
                     child_pdg[0]) in exclude):
                 read_idx += len_data[tupidx]
@@ -115,7 +115,7 @@ class HDF5Backend(object):
                  mat_data[1, read_idx:read_idx + len_data[tupidx]],
                  indptr_data[tupidx, :]),
                 shape=(self.dim_full, self.dim_full
-                       ))[self.min_idx:self.max_idx, self.min_idx:self.max_idx]).todense()
+                       ))[self.min_idx:self.max_idx, self.min_idx:self.max_idx]).toarray()
 
             relations[parent_pdg].append(child_pdg)
 
@@ -188,9 +188,9 @@ class HDF5Backend(object):
                     mceq_db['decays']['custom_decays'],
                     mceq_db['decays']['custom_decays' + '_indptrs'])
                 # for tup in custom_index['index_d']:
-                    # if tup not in dec_index['index_d']:
-                    #     info(2, tup, 'was not in normal decay_db.')
-                    #     continue
+                # if tup not in dec_index['index_d']:
+                #     info(2, tup, 'was not in normal decay_db.')
+                #     continue
 
                 info(2, 'Replacing decay from custom decay_db.')
                 dec_index['index_d'].update(custom_index['index_d'])
@@ -200,7 +200,7 @@ class HDF5Backend(object):
                 _ = dec_index['index_d'].pop(((-211,0),(13,0)))
                 _ = dec_index['index_d'].pop(((321,0),(-13,0)))
                 _ = dec_index['index_d'].pop(((-321,0),(13,0)))
-                
+
                 dec_index['relations'] = defaultdict(lambda : [])
                 dec_index['particles'] = []
 
@@ -252,10 +252,10 @@ class HDF5Backend(object):
                 index_d[int(pstr)] = cl_db[pstr][self.min_idx:self.max_idx]
             if config['enable_em']:
                 self._check_subgroup_exists(mceq_db, 'electromagnetic')
-                index_d[11] = -mceq_db["electromagnetic"]['ion_emi'][
-                    self.min_idx:self.max_idx, self.min_idx:self.max_idx]
-                index_d[-11] = -mceq_db["electromagnetic"]['ion_epl'][
-                    self.min_idx:self.max_idx, self.min_idx:self.max_idx]
+                index_d[11] = mceq_db["electromagnetic"]['dEdX 11'][
+                    self.min_idx:self.max_idx]
+                index_d[-11] = mceq_db["electromagnetic"]['dEdX -11'][
+                    self.min_idx:self.max_idx]
 
         return {'parents': sorted(index_d.keys()), 'index_d': index_d}
 
@@ -278,7 +278,7 @@ class Interactions(object):
 
     """
 
-    def __init__(self, mceq_hdf_db, interaction_model='SIBYLL2.3c'):
+    def __init__(self, mceq_hdf_db):
         from collections import defaultdict
 
         #: MCEq HDF5Backend reference
@@ -297,13 +297,11 @@ class Interactions(object):
         self.description = None
 
         #: (str) Interaction Model name
-        self.iam = normalize_hadronic_model_name(interaction_model)
+        self.iam = None
         # #: (tuple) selection of a band of coeffictients (in xf)
         # self.band = None
         #: (tuple) modified particle combination for error prop.
         self.mod_pprod = defaultdict(lambda: {})
-        # Load defaults
-        self.load(self.iam)
 
     def load(self, interaction_model):
         from MCEq.misc import is_charm_pdgid
@@ -582,20 +580,22 @@ class Decays(object):
                                     interaction model
     """
 
-    def __init__(self, mceq_hdf_db, parent_list=None,
-                 decay_dset='full_decays'):
+    def __init__(self, mceq_hdf_db, default_decay_dset='full_decays'):
 
         #: MCEq HDF5Backend reference
         self.mceq_db = mceq_hdf_db
         #: reference to energy grid
         self.energy_grid = mceq_hdf_db.energy_grid
         #: (list) List of particles in the decay matrices
-        self.parent_list = parent_list
-        #load defaults
-        self.load(parent_list, decay_dset)
+        self.parent_list = []
+        self._default_decay_dset = default_decay_dset
 
-    def load(self, reduced_parent_list=None, decay_dset='full_decays'):
+    def load(self, parent_list=None, 
+            decay_dset=None):
         # Load tables and index from file
+        if decay_dset is None:
+            decay_dset = self._default_decay_dset
+            
         index = self.mceq_db.decay_db(decay_dset)
 
         self.parents = index['parents']
@@ -605,16 +605,16 @@ class Decays(object):
         self.description = index['description']
         # Advanced options
         regenerate_index = False
-        if (reduced_parent_list):
+        if (parent_list):
             # Take only the parents provided by the list
             self.parents = [
-                p for p in self.parents if p in reduced_parent_list
+                p for p in self.parents if p in parent_list
             ]
             # Add the decay products, which can become new parents
             self.parents += sorted(list(set([p for p in self.parents for p in self.relations[p]])))
             regenerate_index = True
-            
-        
+
+
         if (config['adv_set']['disable_decays']):
             self.parents = [
                 p for p in self.parents

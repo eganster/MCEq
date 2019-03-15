@@ -77,14 +77,13 @@ config = {
     #===========================================================================
 
     # Minimal energy for grid has to be > 1e-5 GeV
-    "e_min" : 1.,
+    "e_min" : 8.4e-2,
 
     # Maximal energy for grid has to be < 1e12 GeV
-    "e_max" : 1e9,
+    "e_max" : 1e13,
 
     # Enable electromagnetic cascade with matrices from EmCA
     "enable_em" : True,
-
 
     # Selection of integrator (euler/odepack)
     "integrator": "euler",

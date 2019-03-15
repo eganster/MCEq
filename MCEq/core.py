@@ -27,6 +27,7 @@ import numpy as np
 from mceq_config import config
 from MCEq.misc import normalize_hadronic_model_name, info, energy_grid
 from MCEq.particlemanager import ParticleManager
+import MCEq.data
 
 
 class MCEqRun(object):
@@ -65,8 +66,7 @@ class MCEqRun(object):
     def __init__(self, interaction_model, density_model, primary_model,
                  theta_deg, **mceq_config):
 
-        import MCEq.data
-        # Overwrite config dictionary 
+        # Overwrite config dictionary
         config = mceq_config
 
         self.mceq_db = MCEq.data.HDF5Backend()
@@ -79,44 +79,44 @@ class MCEqRun(object):
 
         #: Interface to interaction tables of the HDF5 database
         self.interactions = MCEq.data.Interactions(
-            mceq_hdf_db=self.mceq_db, interaction_model=interaction_model)
-        
-        #: Interface to decay tables of the HDF5 database
-        self.decays = MCEq.data.Decays(
-            mceq_hdf_db=self.mceq_db, parent_list=self.interactions.particles)
+            mceq_hdf_db=self.mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self.int_cs = MCEq.data.InteractionCrossSections(
-            mceq_hdf_db=self.mceq_db, interaction_model=interaction_model)
+            mceq_hdf_db=self.mceq_db)
 
         #: handler for cross-section data of type :class:`MCEq.data.HadAirCrossSections`
         self.cont_losses = MCEq.data.ContinuousLosses(
             mceq_hdf_db=self.mceq_db, material='air')
 
-        # Default GPU device id for CUDA
-        self.cuda_device = config['GPU_id'] if 'GPU_id' in mceq_config else 0
+        #: Interface to decay tables of the HDF5 database
+        self.decays = MCEq.data.Decays(mceq_hdf_db=self.mceq_db)
+
+        #: Particle manager (initialized/updated in set_interaction_model)
+        self.pman = None
+
+        # Particle list to keep track of previously initialized particles
+        self._particle_list = None
 
         # General Matrix dimensions and shortcuts, controlled by
         # grid of yield matrices
         self._energy_grid = self.mceq_db.energy_grid
 
-        # Custom particle list can be defined
-        particle_list = mceq_config.pop(
-            'particle_list',
-            self.interactions.particles + self.decays.particles)
-
-        # Create particle database
-        self.pman = ParticleManager(particle_list, self._energy_grid, self.int_cs)
         # Initialize solution vector
-        self._solution = np.zeros(self.pman.dim_states)
+        self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
-        self._phi0 = np.zeros(self.pman.dim_states)
-        # Initialize matrix builder
-        self.matrix_builder = MatrixBuilder(self.pman)
+        self._phi0 = np.zeros(1)
 
         # Set interaction model and compute grids and matrices
-        self.set_interaction_model(interaction_model, force=True)
-        
+        self.set_interaction_model(interaction_model, particle_list=mceq_config.pop('particle_list', None))
+
+        # Default GPU device id for CUDA
+        self.cuda_device = config['GPU_id'] if 'GPU_id' in mceq_config else 0
+
+
+        # Initialize matrix builder (initialized in set_interaction_model)
+        self.matrix_builder = None
+
         #Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
 
@@ -234,6 +234,8 @@ class MCEqRun(object):
 
     def set_interaction_model(self,
                               interaction_model,
+                              particle_list = None,
+                              update_particle_list = True,
                               force=False):
         """Sets interaction model and/or an external charm model for calculation.
 
@@ -249,31 +251,68 @@ class MCEqRun(object):
 
         info(1, interaction_model)
 
-        if not force and (self.interactions.iam == interaction_model):
+        if not force and (self.interactions.iam == interaction_model
+                          ) and particle_list != self._particle_list:
             info(2, 'Skip, since current model identical to',
                  interaction_model + '.')
             return
 
-        self.interactions.load(interaction_model)
         self.int_cs.load(interaction_model)
-        self.decays.load(reduced_parent_list=self.interactions.particles)
+        self.interactions.load(interaction_model)
 
-        self.pman.set_interaction_model(
-            self.int_cs,
-            self.interactions,
-            force=force,
-            updated_parent_list=self.interactions.particles +
-            self.decays.particles)
-        self.pman.set_decay_channels(self.decays)
-        self.pman.set_continuous_losses(self.cont_losses)
+        skip_decay_matrix = False
+
+        if not update_particle_list and self._particle_list is not None:
+            self.pman.set_interaction_model(self.int_cs, self.interactions)
+            skip_decay_matrix = True
+
+        elif self._particle_list is None:
+            # First initialization
+            if particle_list is None:
+                self.decays.load(parent_list=self.interactions.particles)
+                self._particle_list = self.interactions.particles + self.decays.particles
+            else:
+                self.decays.load(parent_list=particle_list)
+                self._particle_list = particle_list + self.decays.particles
+            print self._particle_list, particle_list
+            # Create particle database
+            self.pman = ParticleManager(self._particle_list,
+                                        self._energy_grid, self.int_cs)
+            self.pman.set_interaction_model(self.int_cs, self.interactions)
+            self.pman.set_decay_channels(self.decays)
+            self.pman.set_continuous_losses(self.cont_losses)
+
+            self.matrix_builder = MatrixBuilder(self.pman)
+        
+        elif update_particle_list and particle_list != self._particle_list:
+
+            # Updated particle list received
+            if particle_list is None:
+                self.decays.load(parent_list=self.interactions.particles)
+                self._particle_list = self.interactions.particles + self.decays.particles
+            else:
+                self.decays.load(parent_list=particle_list)
+                self._particle_list = particle_list + self.decays.particles
+
+            self.pman.set_interaction_model(
+                self.int_cs,
+                self.interactions,
+                updated_parent_list=self._particle_list)
+            self.pman.set_decay_channels(self.decays)
+            self.pman.set_continuous_losses(self.cont_losses)
+
+
+        else:
+            raise Exception('Should not happen in practice.')
 
         # Update dimensions if particle dimensions changed
+        # TODO: Can be a bug if indices for particles change
         self._phi0.resize(self.dim_states)
         self._solution.resize(self.dim_states)
 
         # initialize matrices
         self.int_m, self.dec_m = self.matrix_builder.construct_matrices(
-            skip_decay_matrix=False)
+            skip_decay_matrix=skip_decay_matrix)
 
     def set_primary_model(self, mclass, tag):
         """Sets primary flux model.
@@ -332,7 +371,7 @@ class MCEqRun(object):
 
         from scipy.linalg import solve
         from MCEq.misc import getAZN_corsika, getAZN
-        
+
         if corsika_id and pdg_id:
             raise Exception('Provide either corsika or PDG ID')
 
@@ -693,10 +732,13 @@ class MatrixBuilder(object):
                     np.max(parent.inverse_interaction_length())
                 ])
                 self.C_blocks[idx] *= parent.inverse_interaction_length()
-            if (child.mceqidx == parent.mceqidx and parent.has_contloss
-                    and config["enable_muon_energy_loss"]):
-                info(5, 'Cont. loss for', parent.name)
-                self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
+            if child.mceqidx == parent.mceqidx and parent.has_contloss:
+                if config["enable_muon_energy_loss"] and abs(parent.pdg_id[0]) == 13:
+                    info(5, 'Cont. loss for', parent.name)
+                    self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
+                if config["enable_em_ion"] and abs(parent.pdg_id[0]) == 11:
+                    info(5, 'Cont. loss for', parent.name)
+                    self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
 
@@ -738,9 +780,6 @@ class MatrixBuilder(object):
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix."""
 
-        if self.pman[pdg_id].is_em and config["enable_em_ion"]:
-            return self.pman[pdg_id].dEdX
-        
         return -np.diag(1 / self._energy_grid.c).dot(
             self.op_matrix.dot(np.diag(self.pman[pdg_id].dEdX)))
 

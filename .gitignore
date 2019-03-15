@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *.o
+*.DS_Store
 
 # pickled or decompressed files
 *.ppd
