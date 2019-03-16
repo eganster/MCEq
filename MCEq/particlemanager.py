@@ -891,7 +891,7 @@ class ParticleManager(object):
         info(1, 'Initializing default tracking categories (pi, K, mu)')
         for parents, prefix in [([(211, 0)], 'pi_'), ([(321, 0)], 'k_'),
                                 ([(13, -1), (13, 1)], 'mulr_'),
-                                ([(13, 0)], 'muh0_'),
+                                ([(13, 0)], 'mu_h0'),
                                 ([(13, -1), (13, 0), (13, 1)], 'mu_'),
                                 ([(310, 0), (130, 0)], 'K0_')]:
             self.track_leptons_from(parents, prefix, exclude_em=True)

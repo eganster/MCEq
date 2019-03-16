@@ -106,6 +106,8 @@ class MCEqRun(object):
         self._solution = np.zeros(1)
         # Initialize empty state (particle density) vector
         self._phi0 = np.zeros(1)
+        # Initialize matrix builder (initialized in set_interaction_model)
+        self.matrix_builder = None
 
         # Set interaction model and compute grids and matrices
         self.set_interaction_model(interaction_model, particle_list=mceq_config.pop('particle_list', None))
@@ -114,8 +116,6 @@ class MCEqRun(object):
         self.cuda_device = config['GPU_id'] if 'GPU_id' in mceq_config else 0
 
 
-        # Initialize matrix builder (initialized in set_interaction_model)
-        self.matrix_builder = None
 
         #Print particle list after tracking particles have been initialized
         self.pman.print_particle_tables(2)
@@ -208,6 +208,9 @@ class MCEqRun(object):
             lep_str = particle_name.split('_')[1]
             if lep_str in ['mu+', 'mu-']:
                 for ls in lep_str, lep_str + '_l', lep_str + '_r':
+                    if ls not in ref:
+                        info(10, 'No separate left and right handed muons available.')
+                        continue
                     res += sol[ref[ls].lidx:ref[ls].
                       uidx] * self._energy_grid.c**mag
             else:
@@ -258,23 +261,22 @@ class MCEqRun(object):
             return
 
         self.int_cs.load(interaction_model)
-        self.interactions.load(interaction_model)
-
         skip_decay_matrix = False
 
         if not update_particle_list and self._particle_list is not None:
+            self.interactions.load(interaction_model,parent_list=self._particle_list)
             self.pman.set_interaction_model(self.int_cs, self.interactions)
             skip_decay_matrix = True
 
         elif self._particle_list is None:
             # First initialization
             if particle_list is None:
-                self.decays.load(parent_list=self.interactions.particles)
-                self._particle_list = self.interactions.particles + self.decays.particles
+                self.interactions.load(interaction_model)
             else:
-                self.decays.load(parent_list=particle_list)
-                self._particle_list = particle_list + self.decays.particles
-            print self._particle_list, particle_list
+                self.interactions.load(interaction_model,parent_list=particle_list)
+
+            self.decays.load(parent_list=self.interactions.particles)
+            self._particle_list = self.interactions.particles + self.decays.particles
             # Create particle database
             self.pman = ParticleManager(self._particle_list,
                                         self._energy_grid, self.int_cs)
@@ -288,19 +290,17 @@ class MCEqRun(object):
 
             # Updated particle list received
             if particle_list is None:
-                self.decays.load(parent_list=self.interactions.particles)
-                self._particle_list = self.interactions.particles + self.decays.particles
+                self.interactions.load(interaction_model,parent_list=self._particle_list)
             else:
-                self.decays.load(parent_list=particle_list)
-                self._particle_list = particle_list + self.decays.particles
+                self.interactions.load(interaction_model,parent_list=particle_list)
 
+            self.decays.load(parent_list=self.interactions.particles)
             self.pman.set_interaction_model(
                 self.int_cs,
                 self.interactions,
                 updated_parent_list=self._particle_list)
             self.pman.set_decay_channels(self.decays)
             self.pman.set_continuous_losses(self.cont_losses)
-
 
         else:
             raise Exception('Should not happen in practice.')
@@ -342,12 +342,15 @@ class MCEqRun(object):
         min_idx = np.argmin(np.abs(self._energy_grid.c - minimal_energy))
         self._phi0 *= 0
         p_top, n_top = self.get_nucleon_spectrum(self._energy_grid.c[min_idx:])[1:]
-        self._phi0[min_idx + self.pman[(2212,0)].lidx:self.pman[(2212,0)].uidx] = 1e-4 * p_top
+        if (2212, 0) in self.pman.keys():
+            self._phi0[min_idx + self.pman[(2212,0)].lidx:self.pman[(2212,0)].uidx] = 1e-4 * p_top
+        else:
+            info(1, 'Warning protons not part of equation system, can not set primary flux.')
 
         if (2112, 0) in self.pman.keys() and not self.pman[(2112, 0)].is_resonance:
             self._phi0[min_idx + self.pman[(2112, 0)].lidx:self.pman[(2112, 0)].
                        uidx] = 1e-4 * n_top
-        else:
+        elif (2212, 0) in self.pman.keys():
             self._phi0[min_idx + self.pman[(2212,0)].lidx:self.pman[(2212,0)].
                        uidx] += 1e-4 * n_top
 
@@ -630,8 +633,8 @@ class MCEqRun(object):
 
         max_X = self.density_model.max_X
         ri = self.density_model.r_X2rho
-        max_ldec = self.matrix_builder.max_ldec
         max_lint = self.matrix_builder.max_lint
+        max_ldec = self.matrix_builder.max_ldec
         info(2, 'X_surface = {0}'.format(max_X))
 
         dX_vec = []
@@ -715,6 +718,7 @@ class MatrixBuilder(object):
         # -I + C
         # In first interaction mode it is just C
         self.max_lint = 0.
+        
         for parent, child in product(cparts, cparts):
             idx = (child.mceqidx, parent.mceqidx)
             # Main diagonal
@@ -741,10 +745,9 @@ class MatrixBuilder(object):
                     self.C_blocks[idx] += self.cont_loss_operator(parent.pdg_id)
 
         self.int_m = self._csr_from_blocks(self.C_blocks)
-
         # -I + D
+        self.max_ldec = 0.
         if not skip_decay_matrix or self.dec_m is None:
-            self.max_ldec = 0.
             for parent, child in product(cparts, cparts):
                 idx = (child.mceqidx, parent.mceqidx)
                 # Main diagonal

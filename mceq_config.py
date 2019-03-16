@@ -77,7 +77,7 @@ config = {
     #===========================================================================
 
     # Minimal energy for grid has to be > 1e-5 GeV
-    "e_min" : 8.4e-2,
+    "e_min" : 1.,#8.4e-2,
 
     # Maximal energy for grid has to be < 1e12 GeV
     "e_max" : 1e13,
@@ -152,7 +152,7 @@ config = {
     "use_isospin_sym": True,
 
     # Helicity dependent muons decays from analytical expressions
-    "muon_helicity_dependence":True,
+    "muon_helicity_dependence":False,
 
     # All of the hadronic interaction models can simulate nucleon-air
     # interactions down to ~60 GeV (lab frame). This limits the

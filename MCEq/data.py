@@ -249,13 +249,15 @@ class HDF5Backend(object):
 
             index_d = {}
             for pstr in cl_db.keys():
-                index_d[int(pstr)] = cl_db[pstr][self.min_idx:self.max_idx]
+                for hel in [0, 1, -1]:
+                    index_d[(int(pstr),hel)] = cl_db[pstr][self.min_idx:self.max_idx]
             if config['enable_em']:
                 self._check_subgroup_exists(mceq_db, 'electromagnetic')
-                index_d[11] = mceq_db["electromagnetic"]['dEdX 11'][
-                    self.min_idx:self.max_idx]
-                index_d[-11] = mceq_db["electromagnetic"]['dEdX -11'][
-                    self.min_idx:self.max_idx]
+                for hel in [0, 1, -1]:
+                    index_d[(11,hel)] = mceq_db["electromagnetic"]['dEdX 11'][
+                        self.min_idx:self.max_idx]
+                    index_d[(-11,hel)] = mceq_db["electromagnetic"]['dEdX -11'][
+                        self.min_idx:self.max_idx]
 
         return {'parents': sorted(index_d.keys()), 'index_d': index_d}
 
@@ -303,7 +305,7 @@ class Interactions(object):
         #: (tuple) modified particle combination for error prop.
         self.mod_pprod = defaultdict(lambda: {})
 
-    def load(self, interaction_model):
+    def load(self, interaction_model, parent_list=None):
         from MCEq.misc import is_charm_pdgid
         self.iam = normalize_hadronic_model_name(interaction_model)
         # Load tables and index from file
@@ -314,9 +316,12 @@ class Interactions(object):
         self.relations = index['relations']
         self.index_d = index['index_d']
         self.description = index['description']
-
+        
         # Advanced options
         regenerate_index = False
+        if parent_list is not None:
+            self.parents = [p for p in self.parents if p in parent_list]
+            regenerate_index = True
         if (config['adv_set']['disable_charm_pprod']):
             self.parents = [p for p in self.parents if not is_charm_pdgid(p[0])]
             regenerate_index = True
@@ -595,7 +600,7 @@ class Decays(object):
         # Load tables and index from file
         if decay_dset is None:
             decay_dset = self._default_decay_dset
-            
+
         index = self.mceq_db.decay_db(decay_dset)
 
         self.parents = index['parents']
