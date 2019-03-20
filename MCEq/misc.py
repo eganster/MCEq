@@ -271,7 +271,7 @@ class EdepZFactors():
 
     def __init__(self, interaction_model, primary_flux_model):
         from MCEq.data import InteractionYields, HadAirCrossSections
-        from ParticleDataTool import SibyllParticleTable
+        from particletools.tables import SibyllParticleTable
         from misc import get_bins_and_width_from_centers
 
         self.y = InteractionYields(interaction_model)

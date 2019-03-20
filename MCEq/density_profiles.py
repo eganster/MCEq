@@ -30,7 +30,7 @@ Example:
   An example can be run by executing the module::
 
       $ python MCEq/atmospheres.py
-"""
+""" 
 from abc import ABCMeta, abstractmethod
 from os.path import join
 import numpy as np

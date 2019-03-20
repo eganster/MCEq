@@ -90,7 +90,7 @@ def convert_to_compact(fname):
     import os
     import cPickle as pickle
     from bz2 import BZ2File
-    import ParticleDataTool
+    import particletools.tables
 
     dpm_di = None
     if fname.endswith('_ledpm.bz2'):
@@ -143,7 +143,7 @@ def convert_to_compact(fname):
     # projectiles
     allowed_projectiles = [2212, 2112, 211, 321, 130, 3122]
 
-    import ParticleDataTool as pd
+    import particletools.tables as pd
     part_d = pd.PYTHIAParticleData()
     ctau_pr = part_d.ctau(310)
 

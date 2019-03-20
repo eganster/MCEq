@@ -64,7 +64,7 @@ class MCEqRun(object):
     def __init__(self, interaction_model, density_model, primary_model,
                  theta_deg, adv_set, obs_ids, **kwargs):
 
-        from ParticleDataTool import SibyllParticleTable, PYTHIAParticleData
+        from particletools.tables import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
 
         interaction_model = normalize_hadronic_model_name(interaction_model)

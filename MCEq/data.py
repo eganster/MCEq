@@ -954,7 +954,7 @@ class InteractionYields(object):
           NotImplementedError: if model string unknown.
         """
 
-        from ParticleDataTool import SibyllParticleTable
+        from particletools.tables import SibyllParticleTable
         from MCEq.charm_models import MRS_charm, WHR_charm
 
         if model is None:
