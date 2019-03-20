@@ -59,7 +59,8 @@ class HDF5Backend(object):
                                             ca['e_bins'][min_idx:max_idx + 1],
                                             ca['widths'][min_idx:max_idx],
                                             max_idx - min_idx)
-            self.min_idx, self.max_idx, self.dim_full = min_idx, max_idx, ca['e_dim']
+            self.min_idx, self.max_idx, self.dim_full = min_idx, max_idx, ca[
+                'e_dim']
 
     @property
     def energy_grid(self):
@@ -114,8 +115,9 @@ class HDF5Backend(object):
                 (mat_data[0, read_idx:read_idx + len_data[tupidx]],
                  mat_data[1, read_idx:read_idx + len_data[tupidx]],
                  indptr_data[tupidx, :]),
-                shape=(self.dim_full, self.dim_full
-                       ))[self.min_idx:self.max_idx, self.min_idx:self.max_idx]).toarray()
+                shape=(self.dim_full,
+                       self.dim_full))[self.min_idx:self.max_idx, self.
+                                       min_idx:self.max_idx]).toarray()
 
             relations[parent_pdg].append(child_pdg)
 
@@ -167,10 +169,14 @@ class HDF5Backend(object):
                 em_index = self._gen_db_dictionary(
                     mceq_db['electromagnetic']['emca_mats'],
                     mceq_db['electromagnetic']['emca_mats' + '_indptrs'])
-                int_index['parents'] = sorted(int_index['parents'] + em_index['parents'])
-                int_index['particles'] = sorted(list(set(int_index['particles'] + em_index['particles'])))
+                int_index['parents'] = sorted(int_index['parents'] +
+                                              em_index['parents'])
+                int_index['particles'] = sorted(
+                    list(set(int_index['particles'] + em_index['particles'])))
                 int_index['relations'].update(em_index['relations'])
                 int_index['index_d'].update(em_index['index_d'])
+
+        int_index['description'] += '\nInteraction model name: ' + mname
 
         return int_index
 
@@ -183,7 +189,7 @@ class HDF5Backend(object):
                 mceq_db['decays'][decay_dset_name + '_indptrs'])
 
             if config["muon_helicity_dependence"]:
-                info(2,'Using helicity dependent decays.')
+                info(2, 'Using helicity dependent decays.')
                 custom_index = self._gen_db_dictionary(
                     mceq_db['decays']['custom_decays'],
                     mceq_db['decays']['custom_decays' + '_indptrs'])
@@ -196,12 +202,16 @@ class HDF5Backend(object):
                 dec_index['index_d'].update(custom_index['index_d'])
 
                 # Remove manually TODO: Kaon decays to muons assumed only two-body
-                _ = dec_index['index_d'].pop(((211,0),(-13,0)))
-                _ = dec_index['index_d'].pop(((-211,0),(13,0)))
-                _ = dec_index['index_d'].pop(((321,0),(-13,0)))
-                _ = dec_index['index_d'].pop(((-321,0),(13,0)))
+                _ = dec_index['index_d'].pop(((211, 0), (-13, 0)))
+                _ = dec_index['index_d'].pop(((-211, 0), (13, 0)))
+                _ = dec_index['index_d'].pop(((321, 0), (-13, 0)))
+                _ = dec_index['index_d'].pop(((-321, 0), (13, 0)))
+                # _ = dec_index['index_d'].pop(((211,0),(14,0)))
+                # _ = dec_index['index_d'].pop(((-211,0),(-14,0)))
+                # _ = dec_index['index_d'].pop(((321,0),(14,0)))
+                # _ = dec_index['index_d'].pop(((-321,0),(-14,0)))
 
-                dec_index['relations'] = defaultdict(lambda : [])
+                dec_index['relations'] = defaultdict(lambda: [])
                 dec_index['particles'] = []
 
                 for idx_tup in dec_index['index_d']:
@@ -211,7 +221,8 @@ class HDF5Backend(object):
                     dec_index['particles'].append(child)
 
                 dec_index['parents'] = sorted(dec_index['relations'].keys())
-                dec_index['particles'] = sorted(list(set(dec_index['particles'])))
+                dec_index['particles'] = sorted(
+                    list(set(dec_index['particles'])))
 
         return dec_index
 
@@ -231,10 +242,12 @@ class HDF5Backend(object):
             if config["enable_em"]:
                 self._check_subgroup_exists(mceq_db, 'electromagnetic')
                 em_cs = mceq_db["electromagnetic"]['cs'][:]
-                em_parents = list(mceq_db["electromagnetic"]['cs'].attrs['projectiles'])
+                em_parents = list(
+                    mceq_db["electromagnetic"]['cs'].attrs['projectiles'])
                 for ip, p in enumerate(em_parents):
                     if p in index_d:
-                        raise Exception('EM cross sections already in database?')
+                        raise Exception(
+                            'EM cross sections already in database?')
 
                     index_d[p] = em_cs[ip, self.min_idx:self.max_idx]
                 parents += em_parents
@@ -250,14 +263,15 @@ class HDF5Backend(object):
             index_d = {}
             for pstr in cl_db.keys():
                 for hel in [0, 1, -1]:
-                    index_d[(int(pstr),hel)] = cl_db[pstr][self.min_idx:self.max_idx]
+                    index_d[(int(pstr),
+                             hel)] = cl_db[pstr][self.min_idx:self.max_idx]
             if config['enable_em']:
                 self._check_subgroup_exists(mceq_db, 'electromagnetic')
                 for hel in [0, 1, -1]:
-                    index_d[(11,hel)] = mceq_db["electromagnetic"]['dEdX 11'][
+                    index_d[(11, hel)] = mceq_db["electromagnetic"]['dEdX 11'][
                         self.min_idx:self.max_idx]
-                    index_d[(-11,hel)] = mceq_db["electromagnetic"]['dEdX -11'][
-                        self.min_idx:self.max_idx]
+                    index_d[(-11, hel)] = mceq_db["electromagnetic"][
+                        'dEdX -11'][self.min_idx:self.max_idx]
 
         return {'parents': sorted(index_d.keys()), 'index_d': index_d}
 
@@ -316,18 +330,21 @@ class Interactions(object):
         self.relations = index['relations']
         self.index_d = index['index_d']
         self.description = index['description']
-        
+
         # Advanced options
         regenerate_index = False
         if parent_list is not None:
             self.parents = [p for p in self.parents if p in parent_list]
             regenerate_index = True
         if (config['adv_set']['disable_charm_pprod']):
-            self.parents = [p for p in self.parents if not is_charm_pdgid(p[0])]
+            self.parents = [
+                p for p in self.parents if not is_charm_pdgid(p[0])
+            ]
             regenerate_index = True
         if (config['adv_set']['disable_interactions_of_unstable']):
             self.parents = [
-                p for p in self.parents if p[0] not in [2212, 2112, -2212, -2112]
+                p for p in self.parents
+                if p[0] not in [2212, 2112, -2212, -2112]
             ]
             regenerate_index = True
         if (config['adv_set']['allowed_projectiles']):
@@ -595,8 +612,7 @@ class Decays(object):
         self.parent_list = []
         self._default_decay_dset = default_decay_dset
 
-    def load(self, parent_list=None, 
-            decay_dset=None):
+    def load(self, parent_list=None, decay_dset=None):
         # Load tables and index from file
         if decay_dset is None:
             decay_dset = self._default_decay_dset
@@ -612,13 +628,12 @@ class Decays(object):
         regenerate_index = False
         if (parent_list):
             # Take only the parents provided by the list
-            self.parents = [
-                p for p in self.parents if p in parent_list
-            ]
+            self.parents = [p for p in self.parents if p in parent_list]
             # Add the decay products, which can become new parents
-            self.parents += sorted(list(set([p for p in self.parents for p in self.relations[p]])))
+            self.parents += sorted(
+                list(
+                    set([p for p in self.parents for p in self.relations[p]])))
             regenerate_index = True
-
 
         if (config['adv_set']['disable_decays']):
             self.parents = [
