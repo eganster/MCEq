@@ -175,8 +175,11 @@ class HDF5Backend(object):
                     list(set(int_index['particles'] + em_index['particles'])))
                 int_index['relations'].update(em_index['relations'])
                 int_index['index_d'].update(em_index['index_d'])
-
-        int_index['description'] += '\nInteraction model name: ' + mname
+        
+        if int_index['description'] is not None:
+            int_index['description'] += '\nInteraction model name: ' + mname
+        else:
+            int_index['description'] = 'Interaction model name: ' + mname
 
         return int_index
 
