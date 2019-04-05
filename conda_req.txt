@@ -5,5 +5,5 @@ scipy
 numba
 jupyter
 matplotlib
-ctypes
+#ctypes
 mkl

@@ -67,6 +67,10 @@ class MCEqRun(object):
 
         from ParticleDataTool import SibyllParticleTable, PYTHIAParticleData
         from MCEq.data import DecayYields, InteractionYields, HadAirCrossSections
+        
+        # update debug level (dbg) from kwargs
+        global dbg
+        dbg = kwargs["debug_level"]
 
         interaction_model = normalize_hadronic_model_name(interaction_model)
         self.cname = self.__class__.__name__

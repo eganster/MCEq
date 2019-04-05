@@ -3,7 +3,8 @@
 import sys
 import platform
 import os.path as path
-base_path = path.dirname(path.abspath(__file__))
+#base_path = path.dirname(path.abspath(__file__))
+base_path = "/data/user/eganster/software/MCEq" # set base_path to installation path of MCEq
 sys.path.append(base_path)
 sys.path.append(base_path + "/CRFluxModels")
 sys.path.append(base_path + "/ParticleDataTool")
