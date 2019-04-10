@@ -34,7 +34,7 @@ Example:
 from abc import ABCMeta, abstractmethod
 from os.path import join
 import numpy as np
-import MCEq.geometry
+from MCEq.geometry import EarthGeometry
 from MCEq.misc import theta_deg, theta_rad
 from numba import jit, double  # @UnresolvedImport
 
@@ -103,7 +103,7 @@ class EarthsAtmosphere():
     __metaclass__ = ABCMeta
 
     def __init__(self, *args, **kwargs):
-        self.geom = MCEq.geometry.EarthGeometry()
+        self.geom = EarthGeometry()
         self.thrad = None
         self.theta_deg = None
         self.max_X = None
