@@ -309,7 +309,7 @@ class MCEqParticle(object):
           (float): :math:`\\frac{\\rho}{\\lambda_{dec}}` in 1/cm
         """
         try:
-            dlen = self.mass / self.ctau / self._energy_grid.c
+            dlen = self.mass / self.ctau / (self._energy_grid.c + self.mass)
             if cut:
                 dlen[0:self.mix_idx] = 0.
             # TODO: verify how much this affects the result
@@ -391,12 +391,12 @@ class MCEqParticle(object):
             (numpy.array, numpy.array): :math:`x_{\rm Lab}`, :math:`dN/dx_{\rm Lab}`
         """
 
-        eidx = (np.abs(self._energy_grid.c - energy)).argmin()
-        en = self._energy_grid.c[eidx]
+        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
+        en = self._energy_grid.c[eidx] + self.mass
         info(2, 'Nearest energy, index: ', en, eidx, condition=verbose)
 
         m = self.hadr_yields[sec_pdg]
-        xl_grid = self._energy_grid.c[:eidx + 1] / en
+        xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
         xl_dist = xl_grid * m[:eidx + 1, eidx]#/self._energy_grid.w[:eidx + 1]
 
         return xl_grid, xl_dist
@@ -449,11 +449,11 @@ class MCEqParticle(object):
 
             return xf, dxl_dxf
 
-        eidx = (np.abs(self._energy_grid.c - energy)).argmin()
-        en = self._energy_grid.c[eidx]
+        eidx = (np.abs(self._energy_grid.c + self.mass - energy)).argmin()
+        en = self._energy_grid.c[eidx] + self.mass
         info(2, 'Nearest energy, index: ', en, eidx, condition=verbose)
         m = self.hadr_yields[sec_pdg]
-        xl_grid = self._energy_grid.c[:eidx + 1] / en
+        xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
         xl_dist = xl_grid * en * m[:eidx + 1, eidx] / np.diag(
             self._energy_grid.w)[:eidx + 1]
         xf_grid, dxl_dxf = xF(xl_grid, en, sec_pdg)

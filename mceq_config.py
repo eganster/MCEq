@@ -45,6 +45,10 @@ config = {
     # Atmosphere and geometry settings
     #=========================================================================
 
+    # The latest versions of MCEq work in kinetic energy not total energy
+    # If you want the result to be compatible with the previous choose 
+    # 'total energy' else 'kinetic energy'
+    "return_as" : "kinetic energy", # "total energy"
     # Atmospheric model in the format: (model, (arguments))
     "density_model": ('CORSIKA', ('BK_USStd', None)),
     # "density_model": ('MSIS00_IC',('SouthPole','January')),
@@ -145,6 +149,13 @@ config = {
 
     # enable EM ionization loss
     "enable_em_ion" : True,
+
+    # Improve (explicit solver) stability by averaging the continous loss
+    # operator
+    "average_loss_operator": True,
+
+    # Step size (dX) for averaging
+    "av_loss_maxstep": 1e-7,
     
     # When using modified particle production matrices use
     # isospin symmetries to determine the corresponding

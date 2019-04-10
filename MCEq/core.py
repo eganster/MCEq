@@ -189,7 +189,7 @@ class MCEqRun(object):
         Returns:
           (numpy.array): flux of particles on energy grid :attr:`e_grid`
         """
-        # Account for the
+        from scipy.interpolate import UnivariateSpline
 
         res = np.zeros(self._energy_grid.d)
         ref = self.pman.pname2pref
@@ -230,10 +230,27 @@ class MCEqRun(object):
             res = sol[ref[particle_name].lidx:ref[particle_name].
                       uidx] * self._energy_grid.c**mag
 
-        if not integrate:
-            return res
+        # When returning in Etot, interpolate on different grid
+        if config['return_as'] == 'total energy':
+            etot_grid = self.e_grid + ref[particle_name].mass
+            nz_sol = np.where(res > 0.)
+            res[nz_sol] = np.interp(
+                np.log(etot_grid[nz_sol]), np.log(self.e_grid[nz_sol]),
+                np.log(res[nz_sol]))
+            res[~nz_sol] *= 0.
+
+            if not integrate:
+                return res
+            else:
+                return res * (etot_grid[1:] - etot_grid[:-1])
+            
+        elif config['return_as'] == 'kinetic energy':
+            if not integrate:
+                return res
+            else:
+                return res * self._energy_grid.w
         else:
-            return res * self._energy_grid.w
+            raise Exception("Unknown 'return_as' variable choice.")
 
     def set_interaction_model(self,
                               interaction_model,
@@ -285,7 +302,7 @@ class MCEqRun(object):
             self.pman.set_continuous_losses(self.cont_losses)
 
             self.matrix_builder = MatrixBuilder(self.pman)
-        
+
         elif update_particle_list and particle_list != self._particle_list:
 
             # Updated particle list received
@@ -718,7 +735,7 @@ class MatrixBuilder(object):
         # -I + C
         # In first interaction mode it is just C
         self.max_lint = 0.
-        
+
         for parent, child in product(cparts, cparts):
             idx = (child.mceqidx, parent.mceqidx)
             # Main diagonal
@@ -779,12 +796,25 @@ class MatrixBuilder(object):
 
         return self.int_m, self.dec_m
 
+    def _average_operator(self, op_mat, max_step = 1e-7):
+        """Averages the continuous loss operator by performing
+        1/max_step explicit euler steps"""
+
+        n_steps = int(1./max_step)
+        info(5, 'Averaging loss operator, nsteps={0}'.format(n_steps))
+        op_step = np.eye(self._energy_grid.d) + op_mat*2.*max_step
+        return np.linalg.matrix_power(op_step,n_steps)
+
     def cont_loss_operator(self, pdg_id):
         """Returns continuous loss operator that can be summed with appropriate
         position in the C matrix."""
-
-        return -np.diag(1 / self._energy_grid.c).dot(
+        op_mat = -np.diag(1 / self._energy_grid.c).dot(
             self.op_matrix.dot(np.diag(self.pman[pdg_id].dEdX)))
+        
+        if config['average_loss_operator']:
+            return self._average_operator(op_mat, config["av_loss_maxstep"])
+        else:
+            return op_mat
 
     @property
     def dim(self):
