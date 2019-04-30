@@ -731,7 +731,7 @@ class MCEqRun(object):
             self.phi0[self.pdg2pref[2212].lidx():self.pdg2pref[2212]
                       .uidx()] += 1e-4 * n_top
 
-    def set_single_primary_particle(self, E, corsika_id):
+    def set_single_primary_particle(self, E, corsika_id, weight=1.):
         """Set type and energy of a single primary nucleus to
         calculation of particle yields.
 
@@ -794,6 +794,10 @@ class MCEqRun(object):
                       n_protons, n_neutrons, En)
 
         cenbin = np.argwhere(En < ebins)[0][0] - 1
+
+        # Apply weights
+        n_protons *= weight
+        n_neutrons *= weight
 
         # Equalize the first three moments for 3 normalizations around the central
         # bin
