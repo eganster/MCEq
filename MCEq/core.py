@@ -396,8 +396,8 @@ class MCEqRun(object):
             raise Exception('Provide either corsika or PDG ID')
 
         info(
-            2, 'particle ID {0}, energy {1:5.3g} GeV'.format(
-                corsika_id, E))
+            2, 'CORSIKA ID {0}, PDG ID {1}, energy {2:5.3g} GeV'.format(
+                corsika_id, pdg_id, E))
 
         egrid = self._energy_grid.c
         ebins = self._energy_grid.b
