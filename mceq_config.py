@@ -96,13 +96,15 @@ config = {
     # With serious nVidia GPUs CUDA a few times faster than MKL
     "kernel_config": "MKL",
 
+    # Select CUDA device ID if you have multiple GPUs
+    "CUDA_GPU_ID": 0,
+
+    # CUDA Floating point precision (default 32-bit 'float') 
+    "CUDA_fp_precision": 32,
+
     #Number of MKL threads (for sparse matrix multiplication the performance
     #advantage from using more than 1 thread is limited by memory bandwidth)
-    "MKL_threads": 24,
-
-    # Floating point precision: 32-bit results in speed-up with CUDA.
-    # Do not use with MKL, it can result in false results and slow down.
-    "FP_precision": 64,
+    "MKL_threads": 8,
 
     #parameters for the odepack integrator. More details at
     #http://docs.scipy.org/doc/scipy/reference/generated/scipy.integrate.ode.html#scipy.integrate.ode

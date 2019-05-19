@@ -197,9 +197,9 @@ class MCEqRun(object):
         if grid_idx is None:
             sol = self._solution
         elif grid_idx >= len(self.grid_sol):
-            sol = self.grid_sol[-1]
+            sol = self.grid_sol[-1,:]
         else:
-            sol = self.grid_sol[grid_idx]
+            sol = self.grid_sol[grid_idx,:]
 
         if particle_name.startswith('total'):
             # Note: This has changed from previous MCEq versions,
