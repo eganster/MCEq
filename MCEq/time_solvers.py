@@ -45,6 +45,33 @@ The functions use different libraries for sparse and dense linear algebra (BLAS)
 import numpy as np
 from mceq_config import config, dbg
 
+from cupy.cuda import cusparse
+from cupy.cuda import device
+import cupyx.scipy.sparse
+
+
+class MatDescriptor(object):
+
+    def __init__(self, descriptor):
+        self.descriptor = descriptor
+
+    # @classmethod
+    # def create(cls):
+    #     descr = cusparse.createMatDescr()
+    #     return MatDescriptor(descr)
+
+    # def __del__(self):
+    #     if self.descriptor:
+    #         cusparse.destroyMatDescr(self.descriptor)
+    #         self.descriptor = None
+
+    def set_mat_type(self, typ):
+        cusparse.setMatType(self.descriptor, typ)
+
+    def set_mat_index_base(self, base):
+        cusparse.setMatIndexBase(self.descriptor, base)
+
+
 def solv_numpy(nsteps,
                dX,
                rho_inv,
@@ -227,9 +254,9 @@ def solv_CUDA_dense(nsteps,
 class CUDASparseContext(object):
     def __init__(self, int_m, dec_m, device_id=0):
 
-        if config['FP_precision'] == 32:
+        if config['CUDA_fp_precision'] == 32:
             self.fl_pr = np.float32
-        elif config['FP_precision'] == 64:
+        elif config['CUDA_fp_precision'] == 64:
             self.fl_pr = np.float64
         else:
             raise Exception(
@@ -238,77 +265,47 @@ class CUDASparseContext(object):
         # Setup GPU stuff and upload data to it
         #======================================================================
         try:
-            from accelerate.cuda.blas import Blas
-            import accelerate.cuda.sparse as cusparse
-            from accelerate.cuda import cuda
+            import cupy as cp
+            import cupyx.scipy as cpx
+            self.cp = cp
+            self.cpx = cpx
+            self.cubl = cp.cuda.cublas
         except ImportError:
             raise Exception("solv_CUDA_sparse(): Numbapro CUDA libaries not " +
                             "installed.\nCan not use GPU.")
 
-        cuda.select_device(0)
-        self.cuda = cuda
-        self.cusp = cusparse.Sparse()
-        self.cubl = Blas()
+        cp.cuda.Device(config['CUDA_GPU_ID']).use()
+        self.cusp_handle = self.cusp.create()
+        self.cubl_handle = self.cubl.create()
         self.set_matrices(int_m, dec_m)
 
+    def _cast_common_type(self, *xs):
+        dtypes = [x.dtype for x in xs if x is not None]
+        dtype = np.find_common_type(dtypes, [])
+        return [x.astype(dtype) if x is not None and x.dtype != dtype else x
+                for x in xs]
+                
     def set_matrices(self, int_m, dec_m):
-        import accelerate.cuda.sparse as cusparse
-        from accelerate.cuda import cuda
-
-        self.m, self.n = int_m.shape
-        self.int_m_nnz = int_m.nnz
-        self.int_m_csrValA = cuda.to_device(int_m.data.astype(self.fl_pr))
-        self.int_m_csrRowPtrA = cuda.to_device(int_m.indptr)
-        self.int_m_csrColIndA = cuda.to_device(int_m.indices)
-
-        self.dec_m_nnz = dec_m.nnz
-        self.dec_m_csrValA = cuda.to_device(dec_m.data.astype(self.fl_pr))
-        self.dec_m_csrRowPtrA = cuda.to_device(dec_m.indptr)
-        self.dec_m_csrColIndA = cuda.to_device(dec_m.indices)
-
-        self.descr = self.cusp.matdescr()
-        self.descr.indexbase = cusparse.CUSPARSE_INDEX_BASE_ZERO
-        self.cu_delta_phi = self.cuda.device_array_like(
-            np.zeros(self.m, dtype=self.fl_pr))
-        print np.zeros(self.m, dtype=self.fl_pr).shape
+        
+        self.cu_int_m = self.cpx.sparse.csr_matrix(int_m,dtype=self.fl_pr)
+        self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m,dtype=self.fl_pr)
+        self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0], dtype=self.fl_pr)
 
     def set_phi(self, phi):
-        self.cu_curr_phi = self.cuda.to_device(phi.astype(self.fl_pr))
+        self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
 
     def get_phi(self):
-        return self.cu_curr_phi.copy_to_host()
+        return self.cp.asnumpy(self.cu_curr_phi)
 
     def do_step(self, rho_inv, dX):
-
-        self.cusp.csrmv(
-            trans='N',
-            m=self.m,
-            n=self.n,
-            nnz=self.int_m_nnz,
-            descr=self.descr,
-            alpha=self.fl_pr(1.0),
-            csrVal=self.int_m_csrValA,
-            csrRowPtr=self.int_m_csrRowPtrA,
-            csrColInd=self.int_m_csrColIndA,
-            x=self.cu_curr_phi,
-            beta=self.fl_pr(0.0),
-            y=self.cu_delta_phi)
-        # print np.sum(cu_curr_phi.copy_to_host())
-        self.cusp.csrmv(
-            trans='N',
-            m=self.m,
-            n=self.n,
-            nnz=self.dec_m_nnz,
-            descr=self.descr,
-            alpha=self.fl_pr(rho_inv),
-            csrVal=self.dec_m_csrValA,
-            csrRowPtr=self.dec_m_csrRowPtrA,
-            csrColInd=self.dec_m_csrColIndA,
-            x=self.cu_curr_phi,
-            beta=self.fl_pr(1.0),
-            y=self.cu_delta_phi)
-        self.cubl.axpy(
-            alpha=self.fl_pr(dX), x=self.cu_delta_phi, y=self.cu_curr_phi)
+        
+        self.cp.cusparse.csrmv(a=self.cu_int_m, x=self.cu_curr_phi, 
+            y=self.cu_delta_phi, alpha=1., beta=0.)
+        self.cp.cusparse.csrmv(a=self.cu_dec_m, x=self.cu_curr_phi, 
+            y=self.cu_delta_phi, alpha=rho_inv, beta=1.)
+        self.cubl.saxpy(self.cubl_handle, 
+            self.cu_delta_phi.shape[0], dX,
+            self.cu_delta_phi.data.ptr, 1, self.cu_curr_phi.data.ptr, 1)
 
 
 def solv_CUDA_sparse(nsteps,
@@ -352,7 +349,7 @@ def solv_CUDA_sparse(nsteps,
     start = time()
 
     for step in xrange(nsteps):
-        c.solve_step(rho_inv[step], dX[step])
+        c.do_step(rho_inv[step], dX[step])
 
         dXaccum += dX[step]
 
