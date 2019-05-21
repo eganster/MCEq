@@ -54,13 +54,12 @@ class HDF5Backend(object):
         with h5py.File(self.h5fname, 'r') as mceq_db:
             from MCEq.misc import energy_grid
             ca = mceq_db['common'].attrs
-            min_idx, max_idx = self._eval_energy_cuts(ca['e_grid'])
-            self._energy_grid = energy_grid(ca['e_grid'][min_idx:max_idx],
-                                            ca['e_bins'][min_idx:max_idx + 1],
-                                            ca['widths'][min_idx:max_idx],
-                                            max_idx - min_idx)
-            self.min_idx, self.max_idx, self.dim_full = min_idx, max_idx, ca[
-                'e_dim']
+            self.min_idx, self.max_idx, self._cuts = self._eval_energy_cuts(ca['e_grid'])
+            self._energy_grid = energy_grid(ca['e_grid'][self._cuts],
+                                            ca['e_bins'][self.min_idx:self.max_idx + 1],
+                                            ca['widths'][self._cuts],
+                                            self.max_idx - self.min_idx)
+            self.dim_full = ca['e_dim']
 
     @property
     def energy_grid(self):
@@ -68,11 +67,12 @@ class HDF5Backend(object):
 
     def _eval_energy_cuts(self, e_centers):
         min_idx, max_idx = 0, len(e_centers)
+        slice0, slice1 = None, None
         if config['e_min'] is not None:
-            min_idx = np.argmin(np.abs(e_centers - config['e_min']))
+            min_idx = slice0 = np.argmin(np.abs(e_centers - config['e_min']))
         if config['e_max'] is not None:
-            max_idx = np.argmin(np.abs(e_centers - config['e_max']))
-        return min_idx, max_idx
+            max_idx = slice1 = np.argmin(np.abs(e_centers - config['e_max']))
+        return min_idx, max_idx, slice(slice0,slice1)
 
     def _gen_db_dictionary(self, hdf_root, indptrs, equivalences={}):
 
@@ -86,9 +86,6 @@ class HDF5Backend(object):
             description = None
         mat_data = hdf_root[:, :]
         indptr_data = indptrs[:]
-        dim_full = self.dim_full
-
-        parent_child_tups = hdf_root.attrs['tuple_idcs']
         len_data = hdf_root.attrs['len_data']
 
         exclude = config['adv_set']["disabled_particles"]
@@ -116,7 +113,7 @@ class HDF5Backend(object):
                  mat_data[1, read_idx:read_idx + len_data[tupidx]],
                  indptr_data[tupidx, :]),
                 shape=(self.dim_full,
-                       self.dim_full))[self.min_idx:self.max_idx, self.
+                       self.dim_full))[self._cuts, self.
                                        min_idx:self.max_idx]).toarray()
 
             relations[parent_pdg].append(child_pdg)
@@ -239,7 +236,7 @@ class HDF5Backend(object):
             index_d = {}
             parents = list(cs_db.attrs['projectiles'])
             for ip, p in enumerate(parents):
-                index_d[p] = cs_data[self.min_idx:self.max_idx, ip]
+                index_d[p] = cs_data[self._cuts, ip]
 
             # Append electromagnetic interaction cross sections from EmCA
             if config["enable_em"]:
@@ -252,7 +249,7 @@ class HDF5Backend(object):
                         raise Exception(
                             'EM cross sections already in database?')
 
-                    index_d[p] = em_cs[ip, self.min_idx:self.max_idx]
+                    index_d[p] = em_cs[ip, self._cuts]
                 parents += em_parents
 
         return {'parents': parents, 'index_d': index_d}
@@ -267,14 +264,14 @@ class HDF5Backend(object):
             for pstr in cl_db.keys():
                 for hel in [0, 1, -1]:
                     index_d[(int(pstr),
-                             hel)] = cl_db[pstr][self.min_idx:self.max_idx]
+                             hel)] = cl_db[pstr][self._cuts]
             if config['enable_em']:
                 self._check_subgroup_exists(mceq_db, 'electromagnetic')
                 for hel in [0, 1, -1]:
                     index_d[(11, hel)] = mceq_db["electromagnetic"]['dEdX 11'][
-                        self.min_idx:self.max_idx]
+                        self._cuts]
                     index_d[(-11, hel)] = mceq_db["electromagnetic"][
-                        'dEdX -11'][self.min_idx:self.max_idx]
+                        'dEdX -11'][self._cuts]
 
         return {'parents': sorted(index_d.keys()), 'index_d': index_d}
 

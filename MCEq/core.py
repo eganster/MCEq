@@ -753,6 +753,7 @@ class MatrixBuilder(object):
                     np.max(parent.inverse_interaction_length())
                 ])
                 self.C_blocks[idx] *= parent.inverse_interaction_length()
+
             if child.mceqidx == parent.mceqidx and parent.has_contloss:
                 if config["enable_muon_energy_loss"] and abs(parent.pdg_id[0]) == 13:
                     info(5, 'Cont. loss for', parent.name)
@@ -838,7 +839,7 @@ class MatrixBuilder(object):
         Note::
 
             It's super pain the a** to construct a properly indexed sparse matrix
-            directly from the blocks, since it totally messes up the order.
+            directly from the blocks, since bmat totally messes up the order.
         """
         from scipy.sparse import csr_matrix
 
