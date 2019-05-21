@@ -196,7 +196,6 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
         if (grid_idcs and grid_step < len(grid_idcs)
                 and grid_idcs[grid_step] == step):
             c.dump_sol()
-            # grid_sol.append(c.get_phi())
             grid_step += 1
 
     info(
