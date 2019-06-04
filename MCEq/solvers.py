@@ -72,13 +72,6 @@ def solv_numpy(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
 
     dXaccum = 0.
 
-    if config['FP_precision'] == 32:
-        imc = int_m.astype(np.float32)
-        dmc = dec_m.astype(np.float32)
-        dxc = dX.astype(np.float32)
-        ric = rho_inv.astype(np.float32)
-        phc = phi.astype(np.float32)
-
     from time import time
     start = time()
 
@@ -183,7 +176,6 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
     c.set_phi(phi)
 
     grid_step = 0
-    grid_sol = []
 
     from time import time
     start = time()
@@ -202,7 +194,7 @@ def solv_CUDA_sparse(nsteps, dX, rho_inv, context, phi, grid_idcs):
         2, "Performance: {0:6.2f}ms/iteration".format(
             1e3 * (time() - start) / float(nsteps)))
 
-    return c.get_phi(), c.get_gridsol()
+    return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
 
 
 def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
@@ -238,22 +230,12 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
     gemv = None
     axpy = None
     np_fl = None
-    if config['FP_precision'] == 32:
-        from ctypes import c_float as fl_pr
-        # sparse CSR-matrix x dense vector
-        gemv = mkl.mkl_scsrmv
-        # dense vector + dense vector
-        axpy = mkl.cblas_saxpy
-        np_fl = np.float32
-    elif config['FP_precision'] == 64:
-        from ctypes import c_double as fl_pr
-        # sparse CSR-matrix x dense vector
-        gemv = mkl.mkl_dcsrmv
-        # dense vector + dense vector
-        axpy = mkl.cblas_daxpy
-        np_fl = np.float64
-    else:
-        raise Exception("solv_MKL_sparse(): Unknown precision specified.")
+    from ctypes import c_double as fl_pr
+    # sparse CSR-matrix x dense vector
+    gemv = mkl.mkl_dcsrmv
+    # dense vector + dense vector
+    axpy = mkl.cblas_daxpy
+    np_fl = np.float64
 
     # Set number of threads
     mkl.mkl_set_num_threads(byref(c_int(config['MKL_threads'])))

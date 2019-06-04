@@ -223,20 +223,26 @@ class MCEqRun(object):
             lep_str = particle_name.split('_')[1]
             res = sol[ref[lep_str].lidx:ref[lep_str].
                       uidx] * self._energy_grid.c**mag
-            res -= sol[ref['pr_' + lep_str].lidx:ref['pr_' + lep_str].
-                       uidx] * self._energy_grid.c**mag
+            try:
+                res -= sol[ref['pr_' + lep_str].lidx:ref['pr_' + lep_str].
+                        uidx] * self._energy_grid.c**mag
+            except KeyError:
+                info(10, 'No prompt leptons for the chosen model')
 
         else:
-            res = sol[ref[particle_name].lidx:ref[particle_name].
-                      uidx] * self._energy_grid.c**mag
+            try:
+                res = sol[ref[particle_name].lidx:ref[particle_name].
+                        uidx] * self._energy_grid.c**mag
+            except KeyError:
+                info(10, 'No prompt leptons for the chosen model')
 
         # When returning in Etot, interpolate on different grid
         if config['return_as'] == 'total energy':
             etot_grid = self.e_grid + ref[particle_name].mass
             nz_sol = np.where(res > 0.)
-            res[nz_sol] = np.interp(
+            res[nz_sol] = np.exp(np.interp(
                 np.log(etot_grid[nz_sol]), np.log(self.e_grid[nz_sol]),
-                np.log(res[nz_sol]))
+                np.log(res[nz_sol])))
             res[~nz_sol] *= 0.
 
             if not integrate:
