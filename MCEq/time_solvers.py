@@ -275,21 +275,26 @@ class CUDASparseContext(object):
                             "installed.\nCan not use GPU.")
 
         cp.cuda.Device(config['CUDA_GPU_ID']).use()
-        self.cusp_handle = self.cusp.create()
         self.cubl_handle = self.cubl.create()
         self.set_matrices(int_m, dec_m)
 
-    def _cast_common_type(self, *xs):
-        dtypes = [x.dtype for x in xs if x is not None]
-        dtype = np.find_common_type(dtypes, [])
-        return [x.astype(dtype) if x is not None and x.dtype != dtype else x
-                for x in xs]
-                
     def set_matrices(self, int_m, dec_m):
         
         self.cu_int_m = self.cpx.sparse.csr_matrix(int_m,dtype=self.fl_pr)
         self.cu_dec_m = self.cpx.sparse.csr_matrix(dec_m,dtype=self.fl_pr)
         self.cu_delta_phi = self.cp.zeros(self.cu_int_m.shape[0], dtype=self.fl_pr)
+
+    def alloc_grid_sol(self, dim, nsols):
+        self.curr_sol_idx = 0
+        self.grid_sol = self.cp.zeros((nsols,dim))
+    
+    def dump_sol(self):
+        self.cp.copyto(self.grid_sol[self.curr_sol_idx, :], self.cu_curr_phi)
+        self.curr_sol_idx += 1
+        # self.grid_sol[self.curr_sol, :] = self.cu_curr_phi
+
+    def get_gridsol(self):
+        return self.cp.asnumpy(self.grid_sol)
 
     def set_phi(self, phi):
         self.cu_curr_phi = self.cp.asarray(phi, dtype=self.fl_pr)
@@ -297,7 +302,7 @@ class CUDASparseContext(object):
     def get_phi(self):
         return self.cp.asnumpy(self.cu_curr_phi)
 
-    def do_step(self, rho_inv, dX):
+    def solve_step(self, rho_inv, dX):
         
         self.cp.cusparse.csrmv(a=self.cu_int_m, x=self.cu_curr_phi, 
             y=self.cu_delta_phi, alpha=1., beta=0.)
@@ -335,7 +340,7 @@ def solv_CUDA_sparse(nsteps,
     c = context
     c.set_phi(phi)
 
-    enmuloss = config['enable_muon_energy_loss']
+    enmuloss = False#config['enable_muon_energy_loss']
     muloss_min_step = config['muon_energy_loss_min_step']
 
     # Accumulate at least a few g/cm2 for energy loss steps
@@ -343,13 +348,13 @@ def solv_CUDA_sparse(nsteps,
     dXaccum = 0.
 
     grid_step = 0
-    grid_sol = []
 
     from time import time
     start = time()
-
+    if len(grid_idcs) > 0:
+        c.alloc_grid_sol(phi.shape[0],len(grid_idcs))
     for step in xrange(nsteps):
-        c.do_step(rho_inv[step], dX[step])
+        c.solve_step(rho_inv[step], dX[step])
 
         dXaccum += dX[step]
 
@@ -361,16 +366,16 @@ def solv_CUDA_sparse(nsteps,
             c.set_phi(phc)
             dXaccum = 0.
 
-        if (grid_idcs and grid_step < len(grid_idcs) and
-                grid_idcs[grid_step] == step):
-            grid_sol.append(c.get_phi())
+        if (grid_idcs and grid_step < len(grid_idcs)
+                and grid_idcs[grid_step] == step):
+            c.dump_sol()
             grid_step += 1
 
     if dbg:
         print "Performance: {0:6.2f}ms/iteration".format(
             1e3 * (time() - start) / float(nsteps))
 
-    return c.get_phi(), grid_sol
+    return c.get_phi(), c.get_gridsol() if len(grid_idcs) > 0 else []
 
 
 def solv_MKL_sparse(nsteps,
@@ -412,6 +417,7 @@ def solv_MKL_sparse(nsteps,
     gemv = None
     axpy = None
     np_fl = None
+    config['FP_precision'] = 64
     if config['FP_precision'] == 32:
         from ctypes import c_float as fl_pr
         # sparse CSR-matrix x dense vector

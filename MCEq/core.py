@@ -110,12 +110,12 @@ class MCEqRun(object):
         self.fa_vars = None
 
         # Default GPU device id for CUDA
-        self.cuda_device = kwargs['GPU_id'] if 'GPU_id' in kwargs else 0
+        self.cuda_device = kwargs['CUDA_GPU_ID'] if 'GPU_id' in kwargs else 0
 
         # Store array precision
-        if config['FP_precision'] == 32:
+        if config['CUDA_fp_precision'] == 32:
             self.fl_pr = np.float32
-        elif config['FP_precision'] == 64:
+        elif config['CUDA_fp_precision'] == 64:
             self.fl_pr = np.float64
         else:
             raise Exception("MCEqRun(): Unknown float precision specified.")
