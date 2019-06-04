@@ -12,6 +12,7 @@ prototyping/
 profile_mceq.py
 tests/
 *.pic
+.ipynb_*
 
 # Temporary data files
 *_ledpm.bz2
