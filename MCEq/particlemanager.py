@@ -156,7 +156,7 @@ class MCEqParticle(object):
         self.name = name
         #: (bool) particle is stable
         #: TODO the exclusion of neutron decays is a hotfix
-        self.is_stable = not self.ctau < np.inf or abs(self.pdg_id[0]) == 2112
+        self.is_stable = not self.ctau < np.inf
 
     def init_custom_particle_data(self, name, pdg_id, helicity, ctau, mass, **kwargs):
         """Add custom particle type. (Incomplete and not debugged)"""
@@ -397,7 +397,7 @@ class MCEqParticle(object):
 
         m = self.hadr_yields[sec_pdg]
         xl_grid = (self._energy_grid.c[:eidx + 1] + self.mass) / en
-        xl_dist = xl_grid * m[:eidx + 1, eidx]#/self._energy_grid.w[:eidx + 1]
+        xl_dist = en * xl_grid * m[:eidx + 1, eidx] / self._energy_grid.w[:eidx + 1]
 
         return xl_grid, xl_dist
 
@@ -808,10 +808,6 @@ class ParticleManager(object):
             modtab = SibyllParticleTable()
             particles = modtab.baryons + modtab.mesons + modtab.leptons
 
-        # TODO: Remove this after new grid/tables have been generated without the
-        # special categories
-        particles = [p for p in particles]
-
         # Remove duplicates
         particles = sorted(list(set(particles)))
 
@@ -912,7 +908,7 @@ class ParticleManager(object):
         elif isinstance(pdg_id_or_name, six.integer_types):
             return self.pdg2pref[(pdg_id_or_name, 0)]
         else:
-            return self.pdg2pref[_pname(pdg_id_or_name[0])]
+            return self.pdg2pref[_pname(pdg_id_or_name)]
 
     def keys(self):
         """Returns pdg_ids of all particles"""

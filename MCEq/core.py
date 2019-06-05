@@ -108,9 +108,10 @@ class MCEqRun(object):
         self._phi0 = np.zeros(1)
         # Initialize matrix builder (initialized in set_interaction_model)
         self.matrix_builder = None
-
+        
         # Set interaction model and compute grids and matrices
-        self.set_interaction_model(interaction_model, particle_list=mceq_config.pop('particle_list', None))
+        self.set_interaction_model(interaction_model, 
+            particle_list=mceq_config.pop('particle_list', None))
 
         # Default GPU device id for CUDA
         self.cuda_device = config['GPU_id'] if 'GPU_id' in mceq_config else 0
@@ -297,7 +298,7 @@ class MCEqRun(object):
                 self.interactions.load(interaction_model)
             else:
                 self.interactions.load(interaction_model,parent_list=particle_list)
-
+            
             self.decays.load(parent_list=self.interactions.particles)
             self._particle_list = self.interactions.particles + self.decays.particles
             # Create particle database

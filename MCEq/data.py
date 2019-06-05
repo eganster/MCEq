@@ -35,6 +35,10 @@ equivalences = {
         130: 321,
         310: 321,
         2112: 2212
+    },
+    'DPMJET': {
+        130: 310,
+        310: 130
     }
 }
 
@@ -154,6 +158,8 @@ class HDF5Backend(object):
                 eqv = equivalences['SIBYLL']
             elif 'QGSJET' in mname:
                 eqv = equivalences['QGSJET']
+            elif 'DPMJET' in mname:
+                eqv = equivalences['DPMJET']
             int_index = self._gen_db_dictionary(
                 mceq_db['hadronic_interactions'][mname],
                 mceq_db['hadronic_interactions'][mname + '_indptrs'],
@@ -333,6 +339,11 @@ class Interactions(object):
 
         # Advanced options
         regenerate_index = False
+#         if config['adv_set']['disabled_particles']:
+#             self.parents = [p for p in self.parents 
+#                             if p[0] not in config['adv_set']['disabled_particles']]
+#             regenerate_index = True
+            
         if parent_list is not None:
             self.parents = [p for p in self.parents if p in parent_list]
             regenerate_index = True
@@ -628,11 +639,20 @@ class Decays(object):
         regenerate_index = False
         if (parent_list):
             # Take only the parents provided by the list
-            self.parents = [p for p in self.parents if p in parent_list]
             # Add the decay products, which can become new parents
-            self.parents += sorted(
-                list(
-                    set([p for p in self.parents for p in self.relations[p]])))
+            def _follow_decay_chain(p, plist):
+                if p in self.relations:
+                    plist.append(p)
+                    for d in self.relations[p]:
+                        _follow_decay_chain(d, plist)
+                else:
+                    return plist
+                
+            plist = []
+            for p in parent_list:
+                _follow_decay_chain(p, plist)
+                
+            self.parents = sorted(list(set(plist)))
             regenerate_index = True
 
         if (config['adv_set']['disable_decays']):
@@ -641,6 +661,7 @@ class Decays(object):
                 if p[0] not in config['adv_set']['disable_decays']
             ]
             regenerate_index = True
+            
         if regenerate_index:
             self.particles = []
             for p in self.relations.keys():

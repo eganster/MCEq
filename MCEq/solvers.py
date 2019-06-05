@@ -300,7 +300,7 @@ def solv_MKL_sparse(nsteps, dX, rho_inv, int_m, dec_m, phi, grid_idcs):
         2, "Performance: {0:6.2f}ms/iteration".format(
             1e3 * (time() - start) / float(nsteps)))
 
-    return npphi, grid_sol
+    return npphi, np.asarray(grid_sol)
 
     # TODO: Debug this and transition to BDF
     def _odepack(dXstep=.1,

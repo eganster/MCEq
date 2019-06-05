@@ -213,10 +213,10 @@ config = {
         # precision loss ~ 1%, for SIBYLL2.3.X with charm 5% above 10^7 GeV
         # Might be different for yields (set_single_primary_particle)
         # For full precision or if in doubt, use []
-        "allowed_projectiles": [2212, 2112, 211, 321, 130, 11, 22],
+        "allowed_projectiles": [],#2212, 2112, 211, 321, 130, 11, 22],
 
         # Disable particle (production)
-        "disabled_particles": [10313],
+        "disabled_particles": [10313, 20, 19, 18, 17, 97, 98, 99, 101, 102, 103],
 
         # Disable leptons coming from prompt hadron decays at the vertex
         "disable_direct_leptons": False,
