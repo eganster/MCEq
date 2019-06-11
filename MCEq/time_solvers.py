@@ -45,11 +45,6 @@ The functions use different libraries for sparse and dense linear algebra (BLAS)
 import numpy as np
 from mceq_config import config, dbg
 
-from cupy.cuda import cusparse
-from cupy.cuda import device
-import cupyx.scipy.sparse
-
-
 class MatDescriptor(object):
 
     def __init__(self, descriptor):
